@@ -97,6 +97,27 @@ CommonJS-semantics change `high` 90%, a 24-file refactor `high` 72% / `max` 25%.
 It never picked `medium` — the model jumps from `low` to `high`, so treat that
 bucket as unused rather than meaningful.
 
+`diff_dilution`, `weakens_security` and `comment_noise` were spot-checked on 7 PRs of
+deliberately different shape. No AUC — none of these PRs have review-decision ground
+truth, so this says the criteria read the diff correctly, not that they predict anything.
+
+- `weakens_security` separated a PR disabling TLS verification (`yes` 83%) from one
+  tightening the same `InsecureSkipVerify` guard (`no` 3%) — it reads the semantics, not
+  the keyword. On that first PR `verdict` said `comment` at 63% and never escalated,
+  which is the approve-bias above, caught live.
+- `diff_dilution` spanned its range: a 1-file change `Concentrated` 90%, a 117-file
+  dependency-bump-plus-regeneration `Buried` 69%, and a one-line dependency removal under
+  246 lines of lockfile `Buried` 67%. On a revert it answered `Buried` at 4% confidence —
+  honest uncertainty rather than a confident wrong answer.
+- `comment_noise` returned `Slight` 92% on a PR whose added comments were one genuine
+  "why" and four restatements, and `Clean` 88-99% wherever no comments were added. Its
+  top two levels, `Noisy` and `Heavy`, have never fired and are untested.
+
+An `unexplained_removals` criterion was tried here and removed. It tracked deletion volume
+rather than whether the description accounted for the removals, and answered `yes` 75% on a
+PR whose body named every removed category by hand. A criterion that punishes the authors
+who write the best descriptions is worse than no criterion.
+
 Two things follow when tuning the rubric:
 
 - The `score` criteria rank better than `verdict`, which is also approve-biased

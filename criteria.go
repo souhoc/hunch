@@ -101,6 +101,16 @@ func defaultQuestions() map[string]Question {
 			},
 			Good: GoodNo,
 		},
+		"weakens_security": {
+			Type: "noul",
+			Instructions: "Does the diff remove, bypass, or loosen a security control that already existed " +
+				"(auth check, permission test, input validation, TLS verification, sandbox, rate limit)?",
+			Criteria: map[string]string{
+				"true":  "A control that existed is removed, made optional, or narrowed",
+				"false": "No control weakened; checks added, unchanged, or moved intact",
+			},
+			Good: GoodNo,
+		},
 		"correctness_risk": {
 			Type:         "score",
 			Instructions: "How likely is this diff to introduce a bug, regression, or production incident?",
@@ -131,6 +141,31 @@ func defaultQuestions() map[string]Question {
 				"Focused: medium size, one concern",
 				"Careful: large or subtle",
 				"Split: should be several pull requests",
+			},
+			Good: GoodLow,
+		},
+		"diff_dilution": {
+			Type: "score",
+			Instructions: "What fraction of this diff is load-bearing — the code that actually delivers the stated " +
+				"purpose, rather than the plumbing, wiring, and mechanical churn that exists only to let it run?",
+			Criteria: []string{
+				"Concentrated: nearly every hunk answers the stated purpose",
+				"Plumbing: a small core plus the wiring it genuinely needs",
+				"Buried: the core is a fraction of the diff, the rest is mechanical or incidental",
+				"Several changes: more than one coherent concern in one pull request",
+			},
+			Good: GoodLow,
+		},
+		"comment_noise": {
+			Type: "score",
+			Instructions: "How much of the commentary added in this diff fails to earn its place? A good comment " +
+				"explains why the code is the way it is, or names a constraint the code cannot state. A bad one restates " +
+				"the code, narrates the change or its history, or addresses the reviewer.",
+			Criteria: []string{
+				"Clean: comments added explain why, or none were needed",
+				"Slight: some restating of what the code already says",
+				"Noisy: comments narrate the change or its history instead of the code",
+				"Heavy: verbose blocks, commented-out code, or commentary aimed at the reviewer",
 			},
 			Good: GoodLow,
 		},

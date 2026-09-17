@@ -113,13 +113,18 @@ CommonJS-semantics change `high` 90%, a 24-file refactor `high` 72% / `max` 25%.
 It never picked `medium` — the model jumps from `low` to `high`, so treat that
 bucket as unused rather than meaningful.
 
+Every percentage quoted in this file is one run, not a constant. The same PR
+re-run moves a couple of points — the TLS-verification anecdote below came back
+`comment` at 63% and then 61% on consecutive runs. Quote a figure as evidence of
+which way a criterion leans, never as a fixed value to assert in a test.
+
 `diff_dilution`, `weakens_security` and `comment_noise` were spot-checked on 7 PRs of
 deliberately different shape. No AUC — none of these PRs have review-decision ground
 truth, so this says the criteria read the diff correctly, not that they predict anything.
 
 - `weakens_security` separated a PR disabling TLS verification (`yes` 83%) from one
   tightening the same `InsecureSkipVerify` guard (`no` 3%) — it reads the semantics, not
-  the keyword. On that first PR `verdict` said `comment` at 63% and never escalated,
+  the keyword. On that first PR `verdict` said `comment` at 61% and never escalated,
   which is the approve-bias above, caught live.
 - `diff_dilution` spanned its range: a 1-file change `Concentrated` 90%, a 117-file
   dependency-bump-plus-regeneration `Buried` 69%, and a one-line dependency removal under
@@ -139,11 +144,13 @@ Two things follow when tuning the rubric:
 - The `score` criteria rank better than `verdict`, which is also approve-biased
   and prints unearned confidence. Do not treat `verdict` as the headline answer
   just because it is listed first. The `Blocks` banner exists because of this: on
-  a PR disabling TLS verification, `verdict` said `comment` at 63% and never
+  a PR disabling TLS verification, `verdict` said `comment` at 61% and never
   escalated, while `weakens_security` sat at 83% two-thirds of the way down the
   report.
-- `test_coverage` reads the diff correctly; it simply does not track review
-  outcome. Criteria can be accurate and non-predictive at once.
+- `test_coverage` reads the diff correctly and still scored 0.20. A criterion can
+  be accurate about the diff and worthless — or worse, backwards — as a predictor
+  of what a reviewer will do. Accuracy and predictiveness are separate properties;
+  measure the second, never infer it from the first.
 
 Merge-vs-close is **not** usable ground truth: closures are dominated by CLA
 bots, duplicates and supersession, none of which are visible in the diff.

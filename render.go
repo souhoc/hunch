@@ -69,17 +69,32 @@ func report(w io.Writer, pr PR, docName string, questions map[string]Question, r
 
 // nextStep turns the code_review_effort answer into the command to run.
 // Custom rubrics without that criterion get nothing.
+//
+// A blocked report never gets the green all-clear. A committed secret often sits
+// in a one-line, trivially-shaped diff, which is exactly when the model answers
+// "skip" — and the last line of the report is the one that gets read, so it must
+// not say "nothing to find" while the banner above says otherwise.
 func nextStep(pr PR, questions map[string]Question, answers map[string]Answer) string {
 	a, ok := answers["code_review_effort"]
 	if !ok || a.Choice == "" {
 		return ""
 	}
-	if a.Choice == "skip" {
-		return fg(green).Render("→ no code review needed") + mutedStyle.Render("  (nothing to find in this diff)")
+	level, blocked := a.Choice, blockers(questions, answers)
+	g := goodness(questions["code_review_effort"], a)
+	if len(blocked) > 0 {
+		g = 0 // a blocked diff is not a clean bill, whatever the effort answer says
 	}
-	return fg(colorOf(goodness(questions["code_review_effort"], a))).Bold(true).
-		Render(fmt.Sprintf("→ /code-review %s %d", a.Choice, pr.Number)) +
-		mutedStyle.Render("  in "+pr.owner+"/"+pr.repo)
+	if level == "skip" {
+		if len(blocked) == 0 {
+			return fg(green).Render("→ no code review needed") + mutedStyle.Render("  (nothing to find in this diff)")
+		}
+		level = "high" // the blocker is the thing to find
+	}
+	line := fg(colorOf(g)).Bold(true).Render(fmt.Sprintf("→ /code-review %s %d", level, pr.Number))
+	if len(blocked) > 0 {
+		return line + mutedStyle.Render("  "+strings.Join(blocked, ", ")+" blocks approval")
+	}
+	return line + mutedStyle.Render("  in "+pr.owner+"/"+pr.repo)
 }
 
 // orderedIDs sorts ids alphabetically but keeps "verdict" on top.

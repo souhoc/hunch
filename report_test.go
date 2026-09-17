@@ -253,3 +253,46 @@ func TestBlockAtRedBoundary(t *testing.T) {
 		}
 	}
 }
+
+// The banner and the next-step line must agree. A committed secret in a diff the
+// model rates "skip" is the case where they used to contradict each other: the
+// report opened with a block and closed with a green all-clear.
+func TestReportBlocked(t *testing.T) {
+	var resp response
+	if err := json.Unmarshal([]byte(sample), &resp); err != nil {
+		t.Fatal(err)
+	}
+	yes := 0.95
+	resp.Answers["leaks_secrets"] = Answer{Type: "noul", Noul: &yes}
+	resp.Answers["code_review_effort"] = Answer{Type: "choice", Choice: "skip"}
+
+	var buf bytes.Buffer
+	pr := PR{Number: 42, Title: "a title", BaseRefName: "main", owner: "o", repo: "r"}
+	report(&buf, pr, "", defaultQuestions(), &resp, 0.042)
+	out := buf.String()
+
+	for _, want := range []string{
+		"⛔ approval blocked by leaks_secrets", // the banner is wired into report()
+		"/code-review high 42",                // "skip" is overridden, not obeyed
+		"leaks_secrets blocks approval",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("blocked report missing %q\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "no code review needed") {
+		t.Errorf("blocked report still prints the all-clear\n%s", out)
+	}
+}
+
+// ...and an unblocked "skip" still gets it.
+func TestNextStepSkipUnblocked(t *testing.T) {
+	no := 0.02
+	got := nextStep(PR{Number: 7}, defaultQuestions(), map[string]Answer{
+		"code_review_effort": {Type: "choice", Choice: "skip"},
+		"leaks_secrets":      {Type: "noul", Noul: &no},
+	})
+	if !strings.Contains(got, "no code review needed") {
+		t.Errorf("clean skip should say so, got %q", got)
+	}
+}

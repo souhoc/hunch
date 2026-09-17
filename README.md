@@ -39,6 +39,17 @@ hunch -dump-questions > my-rubric.json                     # start from the defa
 hunch -questions my-rubric.json https://github.com/owner/repo/pull/123
 ```
 
+## Shell completions
+
+```sh
+hunch completions fish > ~/.config/fish/completions/hunch.fish
+hunch completions bash > /usr/local/etc/bash_completion.d/hunch
+hunch completions zsh  > "${fpath[1]}/_hunch"
+```
+
+The scripts are generated from the flags themselves, so they cannot drift. The
+`completions` subcommand is deliberately left out of them.
+
 ## Development
 
 Uses [Task](https://taskfile.dev):

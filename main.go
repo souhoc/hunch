@@ -16,43 +16,40 @@ func main() {
 	log.SetFlags(0)
 	log.SetPrefix("hunch: ")
 
-	var (
-		model     = flag.String("model", "jev-latest", "TypeSafe model")
-		qFile     = flag.String("questions", "", "JSON file overriding the default criteria")
-		docNames  = flag.String("docs", "CLAUDE.md,README.md", "project docs to look for, first match wins")
-		maxDiff   = flag.Int("max-diff", 10000, "truncate the diff to this many bytes")
-		maxDoc    = flag.Int("max-doc", 30000, "truncate the project doc to this many bytes")
-		retries   = flag.Int("retries", 3, "retries on 429/529")
-		price     = flag.Float64("price", defaultPricePerMTok, "USD per million input tokens, for the cost line")
-		dumpQ     = flag.Bool("dump-questions", false, "print the default criteria as JSON and exit")
-		dumpState = flag.Bool("dump-state", false, "print the state that would be sent and exit (no API call)")
-		asJSON    = flag.Bool("json", false, "print the raw API response")
-		keyName   = flag.String("key", "typesafe:hunch", "skate key holding the API key")
-		verbose   = flag.Bool("v", false, "log progress to stderr")
-	)
+	o := registerFlags(flag.CommandLine)
 	flag.Parse()
 
+	if flag.Arg(0) == "completions" {
+		script, err := completions(flag.Arg(1), flag.CommandLine)
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Print(script)
+		return
+	}
+
 	questions := defaultQuestions()
-	if *qFile != "" {
+	if o.qFile != "" {
 		var err error
-		if questions, err = loadQuestions(*qFile); err != nil {
+		if questions, err = loadQuestions(o.qFile); err != nil {
 			log.Fatal(err)
 		}
 	}
-	if *dumpQ {
+	if o.dumpQ {
 		printJSON(questions)
 		return
 	}
 
 	if flag.NArg() != 1 {
-		fmt.Fprintf(os.Stderr, "usage: hunch [flags] <pull request url>\n\n")
+		fmt.Fprintf(os.Stderr, "usage: hunch [flags] <pull request url>\n")
+		fmt.Fprintf(os.Stderr, "       hunch completions %s\n\n", strings.Join(supportedShells, "|"))
 		flag.PrintDefaults()
 		os.Exit(2)
 	}
 	url := flag.Arg(0)
 
 	logf := func(format string, a ...any) {}
-	if *verbose {
+	if o.verbose {
 		logf = func(format string, a ...any) { log.Printf(format, a...) }
 	}
 
@@ -63,25 +60,25 @@ func main() {
 	}
 
 	logf("fetching diff")
-	diff, err := fetchDiff(url, *maxDiff)
+	diff, err := fetchDiff(url, o.maxDiff)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	docName, guidelines := fetchGuidelines(pr, strings.Split(*docNames, ","), *maxDoc)
+	docName, guidelines := fetchGuidelines(pr, strings.Split(o.docNames, ","), o.maxDoc)
 	if docName == "" {
-		logf("no project doc found (%s)", *docNames)
+		logf("no project doc found (%s)", o.docNames)
 	} else {
 		logf("using %s as project guidelines", docName)
 	}
 
 	state := State{PR: pr, Guidelines: guidelines, Diff: diff}
-	if *dumpState {
+	if o.dumpState {
 		printJSON(state)
 		return
 	}
 
-	apiKey, err := apiKey(*keyName)
+	apiKey, err := apiKey(o.keyName)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -89,9 +86,9 @@ func main() {
 	logf("evaluating %d criteria", len(questions))
 	c := &client{
 		apiKey:  apiKey,
-		model:   *model,
+		model:   o.model,
 		http:    &http.Client{Timeout: 5 * time.Minute},
-		retries: *retries,
+		retries: o.retries,
 		logf:    logf,
 	}
 	resp, err := c.evaluate(state, apiQuestions(questions))
@@ -99,11 +96,11 @@ func main() {
 		log.Fatal(err)
 	}
 
-	if *asJSON {
+	if o.asJSON {
 		printJSON(resp)
 		return
 	}
-	report(os.Stdout, pr, docName, questions, resp, *price)
+	report(os.Stdout, pr, docName, questions, resp, o.price)
 }
 
 func loadQuestions(path string) (map[string]Question, error) {
@@ -139,4 +136,39 @@ func apiKey(name string) (string, error) {
 		return key, nil
 	}
 	return "", fmt.Errorf("no API key: set TYPESAFE_API_KEY or store one with `skate set %s <key>`", name)
+}
+
+// options holds every command-line flag. Registering them on a FlagSet rather
+// than the package-level flag functions keeps them introspectable, which is how
+// completions.go stays in step with them.
+type options struct {
+	model     string
+	qFile     string
+	docNames  string
+	keyName   string
+	maxDiff   int
+	maxDoc    int
+	retries   int
+	price     float64
+	dumpQ     bool
+	dumpState bool
+	asJSON    bool
+	verbose   bool
+}
+
+func registerFlags(fs *flag.FlagSet) *options {
+	o := &options{}
+	fs.StringVar(&o.model, "model", "jev-latest", "TypeSafe model")
+	fs.StringVar(&o.qFile, "questions", "", "JSON file overriding the default criteria")
+	fs.StringVar(&o.docNames, "docs", "CLAUDE.md,README.md", "project docs to look for, first match wins")
+	fs.StringVar(&o.keyName, "key", "typesafe:hunch", "skate key holding the API key")
+	fs.IntVar(&o.maxDiff, "max-diff", 10000, "truncate the diff to this many bytes")
+	fs.IntVar(&o.maxDoc, "max-doc", 30000, "truncate the project doc to this many bytes")
+	fs.IntVar(&o.retries, "retries", 3, "retries on 429/529")
+	fs.Float64Var(&o.price, "price", defaultPricePerMTok, "USD per million input tokens, for the cost line")
+	fs.BoolVar(&o.dumpQ, "dump-questions", false, "print the default criteria as JSON and exit")
+	fs.BoolVar(&o.dumpState, "dump-state", false, "print the state that would be sent and exit (no API call)")
+	fs.BoolVar(&o.asJSON, "json", false, "print the raw API response")
+	fs.BoolVar(&o.verbose, "v", false, "log progress to stderr")
+	return o
 }

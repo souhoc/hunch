@@ -21,7 +21,8 @@ task cover MIN_COVERAGE=80       # try a stricter gate without editing anything
 go test -run TestGoodness -v     # one test
 ```
 
-CI (`.github/workflows/ci.yml`) runs exactly these plus `-race`.
+CI (`.github/workflows/ci.yml`) runs exactly these plus `-race`, and installs
+zsh and fish so the completion-script syntax checks do not skip themselves.
 `MIN_COVERAGE` is a ratchet, not a target: raise it in both `Taskfile.yml` and
 the workflow when coverage climbs.
 
@@ -68,6 +69,10 @@ Requires `gh` installed and authenticated. The API key comes from
   to print the `/code-review <level> <number>` command. A rubric without that id
   prints nothing. This is the only id the renderer knows by name — keep it that way
   rather than growing a generic hook for one instance.
+- **Completions are generated from the `*flag.FlagSet`, never a hand-kept list.**
+  `registerFlags` exists so the flags are introspectable outside `main` — `go test`
+  registers its own flags on `flag.CommandLine`, so tests build their own set.
+  The `completions` subcommand must stay absent from its own output.
 - **Score headlines name the modal level** (`likeliest(probabilities)`), not the
   rounded weighted score, so the headline and the bars below it agree.
 

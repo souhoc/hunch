@@ -27,6 +27,11 @@ var (
 
 const barWidth = 20
 
+// redAt is the goodness at or below which an answer renders red — and, for a
+// Blocks criterion, overrides an approving verdict. One threshold for both, so
+// the report can never paint a criterion green and block on it at the same time.
+const redAt = 0.33
+
 func fg(c lipgloss.TerminalColor) lipgloss.Style { return lipgloss.NewStyle().Foreground(c) }
 
 // report prints one block per criterion, verdict first.
@@ -43,6 +48,12 @@ func report(w io.Writer, pr PR, docName string, questions map[string]Question, r
 	}, "\n")
 	fmt.Fprintln(w, headerBox.Render(header))
 	fmt.Fprintln(w)
+
+	if ids := blockers(questions, resp.Answers); len(ids) > 0 {
+		fmt.Fprintln(w, fg(red).Bold(true).Render("⛔ approval blocked by "+strings.Join(ids, ", "))+
+			mutedStyle.Render("  whatever verdict says"))
+		fmt.Fprintln(w)
+	}
 
 	for _, id := range orderedIDs(resp.Answers) {
 		q := questions[id]
@@ -83,6 +94,22 @@ func orderedIDs(answers map[string]Answer) []string {
 		}
 		return ids[i] < ids[j]
 	})
+	return ids
+}
+
+// blockers lists the criteria answered badly enough to override an approving
+// verdict. verdict is the weakest scored criterion in the rubric and carries an
+// approve bias, so a confident "yes, this removes a security control" has to beat
+// it rather than sit below it in the list. A rubric that marks nothing Blocks
+// gets no banner.
+func blockers(questions map[string]Question, answers map[string]Answer) []string {
+	var ids []string
+	for id, a := range answers {
+		if q := questions[id]; q.Blocks && goodness(q, a) <= redAt {
+			ids = append(ids, id)
+		}
+	}
+	sort.Strings(ids)
 	return ids
 }
 
@@ -192,7 +219,7 @@ func colorOf(g float64) lipgloss.TerminalColor {
 	switch {
 	case g >= 0.66:
 		return green
-	case g <= 0.33:
+	case g <= redAt:
 		return red
 	default:
 		return amber

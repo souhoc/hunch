@@ -13,7 +13,7 @@ import (
 const sample = `{
   "model": "jev-latest",
   "answers": {
-    "test_coverage": {"type": "noul", "noul": 0.12},
+    "description_matches_diff": {"type": "noul", "noul": 0.12},
     "verdict": {
       "type": "choice",
       "choice": "request_changes",
@@ -43,9 +43,9 @@ func TestRenderAnswers(t *testing.T) {
 
 	questions := defaultQuestions()
 	for id, want := range map[string]string{
-		"test_coverage":    "no  (12% yes)",
-		"verdict":          "request_changes  (70% confident)",
-		"correctness_risk": "Moderate  1.6/3",
+		"description_matches_diff": "no  (12% yes)",
+		"verdict":                  "request_changes  (70% confident)",
+		"correctness_risk":         "Moderate  1.6/3",
 	} {
 		if got := renderAnswer(id, questions[id], resp.Answers[id]); !strings.Contains(got, want) {
 			t.Errorf("%s: want %q in:\n%s", id, want, got)
@@ -62,9 +62,9 @@ func TestGoodness(t *testing.T) {
 	q := defaultQuestions()
 
 	cases := map[string]float64{
-		"test_coverage":    0.12,      // yes is good, and it is mostly no
-		"verdict":          0.0,       // request_changes
-		"correctness_risk": 1 - 1.6/3, // low is good, and it is 1.6/3
+		"description_matches_diff": 0.12,      // yes is good, and it is mostly no
+		"verdict":                  0.0,       // request_changes
+		"correctness_risk":         1 - 1.6/3, // low is good, and it is 1.6/3
 	}
 	for id, want := range cases {
 		if got := goodness(q[id], resp.Answers[id]); got != want {
@@ -89,13 +89,13 @@ func TestParsePRURL(t *testing.T) {
 	}
 }
 
-// The good/good_choices fields are ours; the API must never see them.
+// The good/good_choices/blocks fields are ours; the API must never see them.
 func TestAPIQuestionsStripsDisplayFields(t *testing.T) {
 	raw, err := json.Marshal(apiQuestions(defaultQuestions()))
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, field := range []string{`"good"`, `"good_choices"`} {
+	for _, field := range []string{`"good"`, `"good_choices"`, `"blocks"`} {
 		if strings.Contains(string(raw), field) {
 			t.Errorf("%s leaked into the request body", field)
 		}
@@ -206,5 +206,50 @@ func TestTruncate(t *testing.T) {
 	got := truncate("abcdefghij", 4)
 	if !strings.HasPrefix(got, "abcd") || !strings.Contains(got, "original was 10 bytes") {
 		t.Errorf("got %q", got)
+	}
+}
+
+// A confident secret or weakened control has to beat an approving verdict, not
+// sit below it in the list.
+func TestBlockers(t *testing.T) {
+	q := defaultQuestions()
+	yes, no := 0.9, 0.05
+
+	for name, tc := range map[string]struct {
+		answers map[string]Answer
+		want    []string
+	}{
+		"clean":         {map[string]Answer{"leaks_secrets": {Type: "noul", Noul: &no}}, nil},
+		"one":           {map[string]Answer{"leaks_secrets": {Type: "noul", Noul: &yes}}, []string{"leaks_secrets"}},
+		"both":          {map[string]Answer{"leaks_secrets": {Type: "noul", Noul: &yes}, "weakens_security": {Type: "noul", Noul: &yes}}, []string{"leaks_secrets", "weakens_security"}},
+		"not a blocker": {map[string]Answer{"in_scope": {Type: "noul", Noul: &no}}, nil},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := blockers(q, tc.answers)
+			if strings.Join(got, ",") != strings.Join(tc.want, ",") {
+				t.Errorf("blockers = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// The banner must never contradict the colour: blocking and red share redAt.
+func TestBlockAtRedBoundary(t *testing.T) {
+	q := map[string]Question{"x": {Type: "noul", Good: GoodNo, Blocks: true}}
+	for _, tc := range []struct {
+		noul    float64
+		blocked bool
+	}{
+		{0.67, true},  // goodness 0.33, exactly red
+		{0.66, false}, // goodness 0.34, amber
+	} {
+		p := tc.noul
+		a := map[string]Answer{"x": {Type: "noul", Noul: &p}}
+		if got := len(blockers(q, a)) > 0; got != tc.blocked {
+			t.Errorf("noul %.2f: blocked=%v, want %v", tc.noul, got, tc.blocked)
+		}
+		if tc.blocked != (colorOf(goodness(q["x"], a["x"])) == red) {
+			t.Errorf("noul %.2f: blocking and red disagree", tc.noul)
+		}
 	}
 }

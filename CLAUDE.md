@@ -73,6 +73,14 @@ Requires `gh` installed and authenticated. The API key comes from
   `registerFlags` exists so the flags are introspectable outside `main` — `go test`
   registers its own flags on `flag.CommandLine`, so tests build their own set.
   The `completions` subcommand must stay absent from its own output.
+- **`Blocks` overrides the verdict, and the renderer never names the ids.** A
+  criterion marked `Blocks: true` whose answer is red prints a banner above
+  everything, because `verdict` is the weakest scored criterion and approve-biased
+  — a confident `weakens_security: yes` has to beat it, not sit below it in the
+  list. Blocking and red share one threshold (`redAt`), so the report can never
+  paint a criterion green and block on it at the same time. `TestBlockAtRedBoundary`
+  guards that. Adding a blocker is a data change in `criteria.go`, never a change
+  to `render.go`.
 - **Score headlines name the modal level** (`likeliest(probabilities)`), not the
   rounded weighted score, so the headline and the bars below it agree.
 
@@ -86,9 +94,17 @@ a coin flip:
 correctness_risk / review_effort / unneeded_complexity   0.76
 verdict (1-approve)                                      0.64
 description_matches_diff                                 0.62
-follows_project_conventions                              0.46   no signal
-test_coverage                                            0.20   anti-correlated
+follows_project_conventions                              0.46   dropped, no signal
+test_coverage                                            0.20   dropped, anti-correlated
 ```
+
+`follows_project_conventions` and `test_coverage` were removed from the rubric on
+the strength of those two numbers. `test_coverage` is the one to think twice about
+before re-adding: it reads the diff correctly and 0.20 is as far from chance as
+0.80, so it carries signal — but inverted, on n=5 per group, almost certainly
+through a confound (bigger, riskier changes attract both tests and scrutiny).
+Inverting it would be fitting the noise. If either comes back, it needs a fresh
+measurement, not this table.
 
 Separately, `code_review_effort` was spot-checked on 6 PRs of deliberately
 different shape and separated them cleanly: dependency bump and docs-only both
@@ -122,7 +138,10 @@ Two things follow when tuning the rubric:
 
 - The `score` criteria rank better than `verdict`, which is also approve-biased
   and prints unearned confidence. Do not treat `verdict` as the headline answer
-  just because it is listed first.
+  just because it is listed first. The `Blocks` banner exists because of this: on
+  a PR disabling TLS verification, `verdict` said `comment` at 63% and never
+  escalated, while `weakens_security` sat at 83% two-thirds of the way down the
+  report.
 - `test_coverage` reads the diff correctly; it simply does not track review
   outcome. Criteria can be accurate and non-predictive at once.
 

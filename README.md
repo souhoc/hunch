@@ -18,8 +18,13 @@ Diff and doc are truncated (`-max-diff`, `-max-doc`) so a huge PR does not blow 
 ## Install
 
 ```sh
-go build -o hunch .
-export TYPESAFE_API_KEY=sk-...
+go install github.com/souhoc/hunch@latest
+```
+
+The API key comes from `TYPESAFE_API_KEY`, or from [skate](https://github.com/charmbracelet/skate):
+
+```sh
+skate set typesafe:hunch apikey_...
 ```
 
 Needs `gh` installed and logged in.

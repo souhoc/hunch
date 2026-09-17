@@ -19,12 +19,16 @@ func main() {
 	o := registerFlags(flag.CommandLine)
 	flag.Parse()
 
-	if flag.Arg(0) == "completions" {
+	switch flag.Arg(0) {
+	case "completions":
 		script, err := completions(flag.Arg(1), flag.CommandLine)
 		if err != nil {
 			log.Fatal(err)
 		}
 		fmt.Print(script)
+		return
+	case "version":
+		fmt.Printf("hunch %s\n", version())
 		return
 	}
 
@@ -42,7 +46,8 @@ func main() {
 
 	if flag.NArg() != 1 {
 		fmt.Fprintf(os.Stderr, "usage: hunch [flags] <pull request url>\n")
-		fmt.Fprintf(os.Stderr, "       hunch completions %s\n\n", strings.Join(supportedShells, "|"))
+		fmt.Fprintf(os.Stderr, "       hunch completions %s\n", strings.Join(supportedShells, "|"))
+		fmt.Fprintf(os.Stderr, "       hunch version\n\n")
 		flag.PrintDefaults()
 		os.Exit(2)
 	}

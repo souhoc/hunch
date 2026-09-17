@@ -154,3 +154,133 @@ Two things follow when tuning the rubric:
 
 Merge-vs-close is **not** usable ground truth: closures are dominated by CLA
 bots, duplicates and supersession, none of which are visible in the diff.
+
+## Scaling the measurement to n=25 (`eval/corpus.json`)
+
+The n=5 numbers above were a one-off, uncommitted process — never reproducible,
+never re-run when the rubric changed. `eval/corpus.json` fixes that: a checked-in
+corpus of 50 real PRs (25 `approved`, 25 `changes_requested`, diverse repos and
+languages, each with a synthesized one-line reason from the actual review
+thread), scored by `hunch eval eval/corpus.json` any time the rubric or model
+changes. AUC against the same APPROVED/CHANGES_REQUESTED ground truth, n=25 per
+group:
+
+```
+diff_dilution              0.71
+verdict                    0.66
+review_effort              0.65
+in_scope                   0.63
+unneeded_complexity        0.62
+correctness_risk           0.61
+leaks_secrets              0.54
+weakens_security           0.53
+code_review_effort         0.53
+comment_noise              0.50
+description_matches_diff   0.46
+```
+
+What changed going from n=5 to n=25:
+
+- `correctness_risk`, `review_effort`, and `unneeded_complexity` all pulled in
+  from 0.76 toward 0.61-0.65. Still real signal, well above chance, but 0.76
+  was an n=5 small-sample effect, not the criteria's true ceiling.
+- `verdict` held steady (0.64 → 0.66) — still the approve-biased weakest
+  scored criterion, still not the headline answer.
+- `description_matches_diff` fell from 0.62 to 0.46 — indistinguishable from a
+  coin flip at n=25, in the same range as the already-dropped
+  `follows_project_conventions` (0.46). The n=5 number was noise. **Kept
+  anyway, deliberately** — see the Conclusion section below for why this is
+  not the same call as dropping `follows_project_conventions`.
+- `diff_dilution` gets a real AUC for the first time (0.71, the best score in
+  this run) — previously only spot-checked with no ground truth to measure
+  against.
+- `leaks_secrets` and `weakens_security` land near chance (0.53-0.54) against
+  approve/changes_requested. That does not mean they are broken: they exist to
+  catch rare, severe issues via `Blocks`, not to rank ordinary review outcomes,
+  and a 50-PR sample of everyday open-source PRs almost certainly contains few
+  or no real secret leaks or security regressions to separate on. Their
+  earlier spot-check (a TLS-verification PR: `yes` 83% vs. a control PR
+  tightening the same guard: `no` 3%) remains the relevant evidence for what
+  they are actually for.
+- `code_review_effort` also scores near chance (0.53) here, which does not
+  contradict its spot-check on 6 PRs of different shape: that measured whether
+  it sizes review depth correctly, not whether it predicts approval. A 24-file
+  refactor can deserve `high` effort and still get approved — different
+  questions.
+- `comment_noise` sits exactly at 0.50, consistent with the earlier finding
+  that its `Noisy`/`Heavy` levels rarely fire: most PRs' comments don't vary
+  enough for this criterion to discriminate by outcome.
+
+Both corpora are genuine open-source review decisions, not this repo's own —
+`eval/corpus.json` is data, not a template to imitate.
+
+**`eval/corpus.json` entries can go stale.** `hunch eval` fetches each PR's diff
+fresh at run time — it does not pin a commit SHA. 17 of the 50 entries are
+`final_state: "open"`, so a future re-run can see a different diff than the one
+the `reason` field describes if the PR gained commits since. This already
+happened once, harmlessly, within this same session: for `django/django#21169`
+and `angular/angular#70710`, a same-session second-judge check (below) found the
+live diff no longer matched the recorded `reason`. Merged and closed entries
+don't have this problem — their diff is frozen. Re-verify the `open` entries
+before trusting a `hunch eval` run that happens long after the corpus was built.
+
+**Run-to-run variance is small and now measured, not just anecdotal.** Five
+independent full runs of `hunch eval eval/corpus.json` gave per-criterion AUC
+within ±0.01–0.04 of each other (worst: `leaks_secrets` at ±0.08, on very few
+positive examples). Per-PR, the two `score`/`noul` answer types moved by 0.01–0.04
+of goodness on average between runs; the two `choice` criteria (`verdict`,
+`code_review_effort`) each flipped their discrete pick on 4 of 50 PRs (8%) across
+5 runs — that flip rate is where nearly all the aggregate variance comes from.
+The 50-PR aggregate numbers above are reproducible; a single PR's report can
+still land on either side of a close call.
+
+**A second LLM judge (Claude, blind to hunch's answers) independently answered
+all 11 criteria on a 12-PR subset** — agreement was 89% (117/132 cells),
+confirming most of the rubric reads consistently across judges, not just across
+runs of the same model. Two results stand out:
+
+- `description_matches_diff` agreement between judges was 11/12 — hunch and a
+  second judge read description-vs-diff matching the same way almost every
+  time. That rules out "hunch just reads it wrong" as the explanation for its
+  0.46 AUC: two independent readers agree with each other and still don't
+  predict the review outcome, the same accurate-but-not-predictive shape as
+  `test_coverage`.
+- On `traefik/traefik#13601`, hunch answered `weakens_security: no` at 4%
+  confidence — wrong. The PR's own description says the new router "carr[ies]
+  only the existing `<routerKey>-app-root` middleware," i.e. explicitly not the
+  auth/rate-limit/IP-allowlist middleware its sibling router has; the human
+  reviewer flagged exactly that, and the second judge caught it independently
+  (55%, correctly) from the PR body alone. `weakens_security` is a `Blocks`
+  criterion — a false "no" here means the report's banner would not have fired
+  on a real security regression. One miss on 12 PRs is not a rate, but it is a
+  concrete example of the failure mode `Blocks` exists to catch and didn't.
+
+## Conclusion (n=25 measurement, current as of this corpus)
+
+- **The rubric has real, modest, now well-measured signal.** Six criteria
+  (`diff_dilution` 0.71, `verdict` 0.66, `review_effort` 0.65, `in_scope` 0.63,
+  `unneeded_complexity` 0.62, `correctness_risk` 0.61) separate approved from
+  changes-requested PRs meaningfully above chance, and the numbers hold across
+  5 independent repeat runs — this is signal, not noise from a small sample.
+- **`verdict` is confirmed to be the shakiest judgment in the rubric, not just
+  approve-biased.** It has by far the lowest agreement between independent
+  judges (5/12, vs. 89% everywhere else) — two competent judges converge on
+  almost every other criterion and diverge most on `verdict` itself. This
+  validates the existing design (`Blocks` overrides it, it is never the
+  headline) rather than changing anything.
+- **`description_matches_diff` is kept, deliberately, despite a 0.46 AUC.**
+  Unlike `follows_project_conventions` (also 0.46, dropped) and `test_coverage`
+  (0.20, inverted — actively misleading), `description_matches_diff` is neither
+  wrong nor confounded: a second judge agreed with hunch's reading 11/12 times.
+  It simply answers a question ("does this description describe this diff?")
+  that is useful to know before reviewing regardless of whether it predicts the
+  outcome. AUC measures predictiveness, not usefulness — a low AUC is a reason
+  to stop calling a criterion a predictor, not automatically a reason to remove
+  it from the report. Re-evaluate this if it ever becomes actively misleading
+  the way `test_coverage` was, not just quiet.
+- **The one real concern is `weakens_security` missing a genuine security
+  regression** (the `traefik` PR above) that both a human reviewer and a second
+  LLM judge caught from the PR's own description. See `.issues/` for a proposed
+  follow-up: a second, focused TypeSafe call scoped to just the
+  acceptance-gating criteria, rather than folding them into the same single
+  11-question call as everything else.

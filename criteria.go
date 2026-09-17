@@ -1,0 +1,138 @@
+package main
+
+// Which answer is the good one. Display only — used to colour the report.
+const (
+	GoodYes  = "yes"  // noul: 1 is good
+	GoodNo   = "no"   // noul: 0 is good
+	GoodLow  = "low"  // score: level 0 is good
+	GoodHigh = "high" // score: the top level is good
+)
+
+// Question is one typed question sent to TypeSafe.
+// Criteria is: object (noul), map[string]string (choice), []string (score).
+type Question struct {
+	Type         string `json:"type"`
+	Instructions string `json:"instructions"`
+	Criteria     any    `json:"criteria,omitempty"`
+
+	// Good and GoodChoices never reach the API; apiQuestions strips them.
+	Good        string             `json:"good,omitempty"`
+	GoodChoices map[string]float64 `json:"good_choices,omitempty"` // choice option -> 0 bad .. 1 good
+}
+
+// apiQuestions drops the display-only fields so the request body stays valid.
+func apiQuestions(questions map[string]Question) map[string]Question {
+	out := make(map[string]Question, len(questions))
+	for id, q := range questions {
+		q.Good, q.GoodChoices = "", nil
+		out[id] = q
+	}
+	return out
+}
+
+// defaultQuestions is the proposed review rubric. Override with -questions file.json.
+func defaultQuestions() map[string]Question {
+	return map[string]Question{
+		"verdict": {
+			Type:         "choice",
+			Instructions: "As a reviewer, what is the right outcome for this pull request?",
+			Criteria: map[string]string{
+				"approve":         "Correct, in scope, ready to merge as is",
+				"comment":         "Mergeable but has nits or questions worth raising",
+				"request_changes": "Has a defect, a missing test, or scope that must change before merge",
+			},
+			GoodChoices: map[string]float64{"approve": 1, "comment": 0.5, "request_changes": 0},
+		},
+		"code_review_effort": {
+			Type: "choice",
+			Instructions: "How much automated code-review effort does this diff deserve? " +
+				"Deeper review costs more and surfaces more uncertain findings; on a trivial diff it is wasted.",
+			Criteria: map[string]string{
+				"skip":   "Nothing to find: version bump, lockfile, generated file, docs, pure rename or reformatting",
+				"low":    "Small self-contained logic change; only obvious, high-confidence bugs are worth reporting",
+				"medium": "Ordinary fix or feature touching real logic across a few files",
+				"high":   "Subtle logic, concurrency, error paths, or a change to a public contract; uncertain findings are worth seeing",
+				"max":    "Wide blast radius: security, auth, money, data migration, or many files of interlocking change",
+			},
+			GoodChoices: map[string]float64{"skip": 1, "low": 0.8, "medium": 0.55, "high": 0.3, "max": 0},
+		},
+		"description_matches_diff": {
+			Type:         "noul",
+			Instructions: "Does the pull request description accurately and completely describe what the diff actually does?",
+			Criteria: map[string]string{
+				"true":  "Description covers every meaningful change in the diff",
+				"false": "Description is empty, vague, stale, or hides changes present in the diff",
+			},
+			Good: GoodYes,
+		},
+		"follows_project_conventions": {
+			Type:         "noul",
+			Instructions: "Does the diff follow the conventions stated in the project guidelines (naming, structure, error handling, commit and PR rules)?",
+			Criteria: map[string]string{
+				"true":  "Consistent with the guidelines and with surrounding code",
+				"false": "Contradicts a stated rule, or introduces a pattern the project does not use",
+			},
+			Good: GoodYes,
+		},
+		"in_scope": {
+			Type:         "noul",
+			Instructions: "Is every hunk in the diff justified by the stated purpose of the pull request?",
+			Criteria: map[string]string{
+				"true":  "One coherent change; no drive-by refactors, reformatting, or unrelated files",
+				"false": "Mixes unrelated work, opportunistic renames, or noisy formatting churn",
+			},
+			Good: GoodYes,
+		},
+		"test_coverage": {
+			Type:         "noul",
+			Instructions: "Is the new or changed behaviour covered by tests added in this diff?",
+			Criteria: map[string]string{
+				"true":  "New behaviour has tests, or the change genuinely needs none (docs, config)",
+				"false": "Adds or changes logic with no matching test",
+			},
+			Good: GoodYes,
+		},
+		"leaks_secrets": {
+			Type:         "noul",
+			Instructions: "Does the diff add a secret, credential, token, private key, or real customer data?",
+			Criteria: map[string]string{
+				"true":  "A real-looking secret or personal data is committed",
+				"false": "No secrets; placeholders and env lookups only",
+			},
+			Good: GoodNo,
+		},
+		"correctness_risk": {
+			Type:         "score",
+			Instructions: "How likely is this diff to introduce a bug, regression, or production incident?",
+			Criteria: []string{
+				"Safe: trivial or fully covered change",
+				"Low: straightforward logic, edge cases handled",
+				"Moderate: touches real logic, some edge cases unclear",
+				"High: unhandled edge case, race, or breaking change to a public contract",
+			},
+			Good: GoodLow,
+		},
+		"unneeded_complexity": {
+			Type:         "score",
+			Instructions: "How much complexity does this diff add beyond what the problem requires (layers, abstractions, options, indirection)?",
+			Criteria: []string{
+				"Minimal: simplest thing that works",
+				"Slight: a little more machinery than needed",
+				"Speculative: premature abstraction or generalisation",
+				"Heavy: framework-scale complexity for a small problem",
+			},
+			Good: GoodLow,
+		},
+		"review_effort": {
+			Type:         "score",
+			Instructions: "How much effort does a human reviewer need to review this pull request properly?",
+			Criteria: []string{
+				"Minutes: small and obvious",
+				"Focused: medium size, one concern",
+				"Careful: large or subtle",
+				"Split: should be several pull requests",
+			},
+			Good: GoodLow,
+		},
+	}
+}

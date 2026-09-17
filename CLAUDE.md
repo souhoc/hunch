@@ -15,12 +15,15 @@ answer shapes. It is the source of truth for the three question/answer types
 ## Commands
 
 ```sh
-go build -o hunch .          # build
-go test ./...                    # all tests
+task                             # lint, test, build
+task cover                       # coverage gate, fails under MIN_COVERAGE
+task cover MIN_COVERAGE=80       # try a stricter gate without editing anything
 go test -run TestGoodness -v     # one test
-go vet ./...                     # vet
-gofmt -l .                       # must print nothing
 ```
+
+CI (`.github/workflows/ci.yml`) runs exactly these plus `-race`.
+`MIN_COVERAGE` is a ratchet, not a target: raise it in both `Taskfile.yml` and
+the workflow when coverage climbs.
 
 Iterate without spending API tokens:
 

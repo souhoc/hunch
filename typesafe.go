@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-const endpoint = "https://api.typesafe.ai/v1/systemone"
+const defaultEndpoint = "https://api.typesafe.ai/v1/systemone"
 
 // TypeSafe charges for input tokens only; output tokens are free.
 // https://docs.typesafe.ai/models — override with -price when the rate moves.
@@ -42,11 +42,13 @@ type response struct {
 }
 
 type client struct {
-	apiKey  string
-	model   string
-	http    *http.Client
-	retries int
-	logf    func(format string, a ...any)
+	apiKey   string
+	model    string
+	endpoint string // empty means defaultEndpoint; tests point it at httptest
+	http     *http.Client
+	retries  int
+	backoff  time.Duration // first retry delay, doubling after each attempt
+	logf     func(format string, a ...any)
 }
 
 func (c *client) evaluate(state any, questions map[string]Question) (*response, error) {
@@ -55,7 +57,10 @@ func (c *client) evaluate(state any, questions map[string]Question) (*response, 
 		return nil, fmt.Errorf("encode request: %w", err)
 	}
 
-	backoff := time.Second
+	backoff := c.backoff
+	if backoff <= 0 {
+		backoff = time.Second
+	}
 	var lastErr error
 	for attempt := 0; attempt <= c.retries; attempt++ {
 		if attempt > 0 {
@@ -77,7 +82,11 @@ func (c *client) evaluate(state any, questions map[string]Question) (*response, 
 }
 
 func (c *client) post(body []byte) (*response, bool, error) {
-	req, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(body))
+	url := c.endpoint
+	if url == "" {
+		url = defaultEndpoint
+	}
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return nil, false, err
 	}

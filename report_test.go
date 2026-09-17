@@ -1,7 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -99,5 +102,109 @@ func TestAPIQuestionsStripsDisplayFields(t *testing.T) {
 	}
 	if got := apiQuestions(defaultQuestions())["verdict"].Instructions; got == "" {
 		t.Error("stripping dropped the instructions")
+	}
+}
+
+func TestMoney(t *testing.T) {
+	for usd, want := range map[float64]string{
+		0.000238: "$0.00024", // sub-cent must not collapse to $0.00
+		0:        "$0.00000",
+		1.5:      "$1.50",
+	} {
+		if got := money(usd); got != want {
+			t.Errorf("money(%v) = %s, want %s", usd, got, want)
+		}
+	}
+}
+
+func TestNextStep(t *testing.T) {
+	pr := PR{Number: 42, owner: "o", repo: "r"}
+	q := defaultQuestions()
+
+	for name, tc := range map[string]struct{ choice, want string }{
+		"high": {"high", "/code-review high 42"},
+		"max":  {"max", "/code-review max 42"},
+		"skip": {"skip", "no code review needed"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := nextStep(pr, q, map[string]Answer{
+				"code_review_effort": {Type: "choice", Choice: tc.choice},
+			})
+			if !strings.Contains(got, tc.want) {
+				t.Errorf("got %q, want %q in it", got, tc.want)
+			}
+		})
+	}
+
+	// A custom rubric without the criterion gets no next-step line.
+	if got := nextStep(pr, q, map[string]Answer{}); got != "" {
+		t.Errorf("want empty, got %q", got)
+	}
+}
+
+func TestReport(t *testing.T) {
+	var resp response
+	if err := json.Unmarshal([]byte(sample), &resp); err != nil {
+		t.Fatal(err)
+	}
+	resp.Answers["code_review_effort"] = Answer{Type: "choice", Choice: "high"}
+
+	var buf bytes.Buffer
+	pr := PR{Number: 42, Title: "a title", URL: "https://example.test/pull/42",
+		ChangedFiles: 1, Additions: 7, Deletions: 2, BaseRefName: "main", owner: "o", repo: "r"}
+	report(&buf, pr, "CLAUDE.md", defaultQuestions(), &resp, 0.042)
+
+	out := buf.String()
+	for _, want := range []string{
+		"#42  a title",
+		"1 file  +7  -2  onto main", // singular
+		"guidelines from CLAUDE.md",
+		"/code-review high 42",
+		"312 in / 48 out tokens",
+		"$0.00001", // 312 tokens at $0.042/Mtok
+		"(output free)",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("report missing %q\n%s", want, out)
+		}
+	}
+}
+
+func TestLoadQuestions(t *testing.T) {
+	dir := t.TempDir()
+	good := filepath.Join(dir, "good.json")
+	os.WriteFile(good, []byte(`{"q":{"type":"noul","instructions":"ok?"}}`), 0o644)
+	q, err := loadQuestions(good)
+	if err != nil || q["q"].Instructions != "ok?" {
+		t.Fatalf("got %v, %v", q, err)
+	}
+
+	bad := filepath.Join(dir, "bad.json")
+	os.WriteFile(bad, []byte(`{`), 0o644)
+	if _, err := loadQuestions(bad); err == nil {
+		t.Error("malformed JSON accepted")
+	}
+
+	empty := filepath.Join(dir, "empty.json")
+	os.WriteFile(empty, []byte(`{}`), 0o644)
+	if _, err := loadQuestions(empty); err == nil || !strings.Contains(err.Error(), "no questions") {
+		t.Errorf("got %v", err)
+	}
+
+	if _, err := loadQuestions(filepath.Join(dir, "missing.json")); err == nil {
+		t.Error("missing file accepted")
+	}
+}
+
+func TestTruncate(t *testing.T) {
+	if got := truncate("short", 100); got != "short" {
+		t.Errorf("got %q", got)
+	}
+	if got := truncate("short", 0); got != "short" {
+		t.Errorf("zero max means no limit, got %q", got)
+	}
+	got := truncate("abcdefghij", 4)
+	if !strings.HasPrefix(got, "abcd") || !strings.Contains(got, "original was 10 bytes") {
+		t.Errorf("got %q", got)
 	}
 }

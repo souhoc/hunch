@@ -1,0 +1,56 @@
+version: '3'
+
+vars:
+  MIN_COVERAGE: 65
+  BINARY: hunch
+
+tasks:
+  default:
+    desc: Lint, test and build — the same checks CI runs
+    cmds:
+      - task: lint
+      - task: test
+      - task: build
+
+  build:
+    desc: Build the binary
+    cmds:
+      - go build -o {{.BINARY}} .
+    sources:
+      - '*.go'
+      - go.sum
+    generates:
+      - '{{.BINARY}}'
+
+  lint:
+    desc: gofmt and vet
+    cmds:
+      - |
+        unformatted=$(gofmt -l .)
+        if [ -n "$unformatted" ]; then
+          echo "not gofmt'd:"
+          echo "$unformatted"
+          exit 1
+        fi
+      - go vet ./...
+
+  test:
+    desc: Run the tests with the race detector
+    cmds:
+      - go test -race ./...
+
+  cover:
+    desc: Report coverage and fail below MIN_COVERAGE
+    cmds:
+      - go test -coverprofile=coverage.out ./... > /dev/null
+      - go tool cover -func=coverage.out | tail -1
+      - |
+        total=$(go tool cover -func=coverage.out | awk '/^total:/ {print substr($3, 1, length($3)-1)}')
+        awk -v got="$total" -v min="{{.MIN_COVERAGE}}" \
+          'BEGIN { if (got + 0 < min + 0) { printf "below minimum %s%%\n", min; exit 1 } }'
+
+  cover:html:
+    desc: Open the coverage report in a browser
+    deps: [cover]
+    cmds:
+      - go tool cover -html=coverage.out

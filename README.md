@@ -39,6 +39,18 @@ hunch -dump-questions > my-rubric.json                     # start from the defa
 hunch -questions my-rubric.json https://github.com/owner/repo/pull/123
 ```
 
+## Development
+
+Uses [Task](https://taskfile.dev):
+
+```sh
+task            # lint, test, build
+task cover      # coverage, fails below MIN_COVERAGE
+task --list     # everything else
+```
+
+CI runs the same checks on every push and pull request.
+
 ## Criteria
 
 | id | type | asks |

@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"sort"
 	"strings"
 
@@ -29,7 +30,7 @@ const barWidth = 20
 func fg(c lipgloss.TerminalColor) lipgloss.Style { return lipgloss.NewStyle().Foreground(c) }
 
 // report prints one block per criterion, verdict first.
-func report(pr PR, docName string, questions map[string]Question, resp *response, pricePerMTok float64) {
+func report(w io.Writer, pr PR, docName string, questions map[string]Question, resp *response, pricePerMTok float64) {
 	meta := fmt.Sprintf("%d %s  +%d  -%d  onto %s",
 		pr.ChangedFiles, plural(pr.ChangedFiles, "file"), pr.Additions, pr.Deletions, pr.BaseRefName)
 	if docName != "" {
@@ -40,18 +41,18 @@ func report(pr PR, docName string, questions map[string]Question, resp *response
 		mutedStyle.Render(pr.URL),
 		mutedStyle.Render(meta),
 	}, "\n")
-	fmt.Println(headerBox.Render(header))
-	fmt.Println()
+	fmt.Fprintln(w, headerBox.Render(header))
+	fmt.Fprintln(w)
 
 	for _, id := range orderedIDs(resp.Answers) {
 		q := questions[id]
-		fmt.Println(renderAnswer(id, q, resp.Answers[id]))
-		fmt.Println()
+		fmt.Fprintln(w, renderAnswer(id, q, resp.Answers[id]))
+		fmt.Fprintln(w)
 	}
 
-	fmt.Println(nextStep(pr, questions, resp.Answers))
+	fmt.Fprintln(w, nextStep(pr, questions, resp.Answers))
 	cost := float64(resp.Usage.InputTokens) / 1e6 * pricePerMTok
-	fmt.Println(mutedStyle.Render(fmt.Sprintf("%s  ·  %d in / %d out tokens  ·  %s  (output free)",
+	fmt.Fprintln(w, mutedStyle.Render(fmt.Sprintf("%s  ·  %d in / %d out tokens  ·  %s  (output free)",
 		resp.Model, resp.Usage.InputTokens, resp.Usage.OutputTokens, money(cost))))
 }
 

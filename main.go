@@ -103,7 +103,7 @@ func main() {
 		printJSON(resp)
 		return
 	}
-	report(pr, docName, questions, resp, *price)
+	report(os.Stdout, pr, docName, questions, resp, *price)
 }
 
 func loadQuestions(path string) (map[string]Question, error) {

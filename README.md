@@ -37,7 +37,12 @@ hunch -v -json https://github.com/owner/repo/pull/123
 hunch -dump-state https://github.com/owner/repo/pull/123   # see the payload, no API call
 hunch -dump-questions > my-rubric.json                     # start from the defaults
 hunch -questions my-rubric.json https://github.com/owner/repo/pull/123
+hunch version
 ```
+
+`hunch version` reads the version Go stamps into the binary at build time — the
+module version for an installed binary, the commit for a build from a checkout.
+There is nothing to bump by hand and no `-ldflags` to remember.
 
 ## Shell completions
 

@@ -67,10 +67,14 @@ func fishCompletions(fs *flag.FlagSet) string {
 		if f.TakesFile {
 			b.WriteString(" -r -F")
 		} else if !f.Bool {
-			b.WriteString(" -r")
+			// -x is -r plus "not a file"; plain -r still lists the directory.
+			b.WriteString(" -x")
 		}
 		b.WriteString("\n")
 	}
+	// The subcommand is not offered, but its argument is worth completing.
+	fmt.Fprintf(&b, "\ncomplete -c hunch -n '__fish_seen_subcommand_from completions' -x -a '%s'\n",
+		strings.Join(supportedShells, " "))
 	return b.String()
 }
 
@@ -83,6 +87,13 @@ func bashCompletions(fs *flag.FlagSet) string {
 		}
 	}
 
+	var valueOpts []string
+	for _, f := range cliFlags(fs) {
+		if !f.Bool && !f.TakesFile {
+			valueOpts = append(valueOpts, "-"+f.Name, "--"+f.Name)
+		}
+	}
+
 	return fmt.Sprintf(`# hunch completions for bash
 # install: hunch completions bash > /usr/local/etc/bash_completion.d/hunch
 
@@ -91,9 +102,18 @@ _hunch() {
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
+    if [[ "${COMP_WORDS[1]}" == "completions" && $COMP_CWORD -eq 2 ]]; then
+        COMPREPLY=( $(compgen -W "%s" -- "$cur") )
+        return
+    fi
+
     case "$prev" in
         %s)
             COMPREPLY=( $(compgen -f -- "$cur") )
+            return
+            ;;
+        %s)
+            COMPREPLY=()
             return
             ;;
     esac
@@ -104,15 +124,19 @@ _hunch() {
     fi
     COMPREPLY=()
 }
-complete -o default -F _hunch hunch
-`, strings.Join(fileOpts, "|"), strings.Join(names, " "))
+complete -F _hunch hunch
+`, strings.Join(supportedShells, " "), strings.Join(fileOpts, "|"),
+		strings.Join(valueOpts, "|"), strings.Join(names, " "))
 }
 
 func zshCompletions(fs *flag.FlagSet) string {
 	var b strings.Builder
 	b.WriteString("#compdef hunch\n")
 	b.WriteString("# install: hunch completions zsh > \"${fpath[1]}/_hunch\"\n\n")
-	b.WriteString("_hunch() {\n    _arguments -s \\\n")
+	b.WriteString("_hunch() {\n")
+	fmt.Fprintf(&b, "    if [[ ${words[2]} == completions ]]; then\n        _values shell %s\n        return\n    fi\n\n",
+		strings.Join(supportedShells, " "))
+	b.WriteString("    _arguments -s \\\n")
 	for _, f := range cliFlags(fs) {
 		switch {
 		case f.Bool:

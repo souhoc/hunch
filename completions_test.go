@@ -45,18 +45,27 @@ func TestCompletionsCoverEveryFlag(t *testing.T) {
 	}
 }
 
-// The subcommand must not be offered while completing a real invocation.
+// The subcommand must never be offered as a candidate. Detecting it in order to
+// complete its argument is fine — what matters is what the shell puts on screen.
 func TestCompletionsOmitTheSubcommand(t *testing.T) {
-	for _, shell := range supportedShells {
-		script, _ := completions(shell, testFlagSet())
-		for _, line := range strings.Split(script, "\n") {
-			if strings.HasPrefix(strings.TrimSpace(line), "#") {
-				continue // install hints name it, that is fine
-			}
-			if strings.Contains(line, "completions") {
-				t.Errorf("%s offers the subcommand: %s", shell, line)
+	for _, cmdline := range []string{"hunch ", "hunch c", "hunch -"} {
+		for _, got := range fishComplete(t, cmdline) {
+			if got == "completions" {
+				t.Errorf("%q offered the subcommand", cmdline)
 			}
 		}
+	}
+
+	// bash and zsh cannot be queried as cheaply; check their candidate lists.
+	bash := bashCompletions(testFlagSet())
+	for _, line := range strings.Split(bash, "\n") {
+		if strings.Contains(line, "compgen -W") && strings.Contains(line, `"completions`) {
+			t.Errorf("bash offers the subcommand: %s", line)
+		}
+	}
+	zsh := zshCompletions(testFlagSet())
+	if strings.Contains(zsh, "'1:command:") || strings.Contains(zsh, "(completions)") {
+		t.Error("zsh offers the subcommand as a candidate")
 	}
 }
 
@@ -64,7 +73,7 @@ func TestFishMarksArgumentFlags(t *testing.T) {
 	script := fishCompletions(testFlagSet())
 	for _, tc := range []struct{ line, want string }{
 		{"complete -c hunch -o json -l json", ""},              // bool: no argument
-		{"complete -c hunch -o model -l model", " -r"},         // string: takes one
+		{"complete -c hunch -o model -l model", " -x"},         // string: takes one, not a file
 		{"complete -c hunch -o questions -l questions", " -F"}, // path: complete files
 	} {
 		var found string
@@ -136,5 +145,78 @@ func TestSanitise(t *testing.T) {
 		if got := sanitise(in); got != want {
 			t.Errorf("sanitise(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// fishComplete asks a real fish what it would offer for a command line.
+func fishComplete(t *testing.T, cmdline string) []string {
+	t.Helper()
+	bin, err := exec.LookPath("fish")
+	if err != nil {
+		t.Skip("fish not installed")
+	}
+	script := filepath.Join(t.TempDir(), "hunch.fish")
+	body, err := completions("fish", testFlagSet())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(script, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := exec.Command(bin, "-c", "source "+script+"; complete -C '"+cmdline+"'").Output()
+	if err != nil {
+		t.Fatalf("fish failed: %v", err)
+	}
+	var got []string
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if line != "" {
+			got = append(got, strings.SplitN(line, "\t", 2)[0])
+		}
+	}
+	return got
+}
+
+// A flag that takes a value must not offer the local directory listing. In fish
+// that needs -x; -r alone means "takes an argument" and still completes files.
+func TestFishValueFlagsDoNotCompleteFiles(t *testing.T) {
+	for _, cmdline := range []string{"hunch -model ", "hunch -max-diff ", "hunch -retries "} {
+		got := fishComplete(t, cmdline)
+		for _, c := range got {
+			if strings.HasSuffix(c, ".go") || strings.HasSuffix(c, ".md") {
+				t.Errorf("%q offered files: %v", cmdline, got)
+				break
+			}
+		}
+	}
+}
+
+func TestFishCompletesFilesForPathFlags(t *testing.T) {
+	if got := fishComplete(t, "hunch -questions "); len(got) == 0 {
+		t.Error("-questions should complete files, got nothing")
+	}
+}
+
+// The subcommand's own argument is worth completing even though the subcommand
+// itself is deliberately not offered.
+func TestFishCompletesShellNames(t *testing.T) {
+	got := fishComplete(t, "hunch completions ")
+	want := map[string]bool{"bash": false, "fish": false, "zsh": false}
+	for _, c := range got {
+		if _, ok := want[c]; ok {
+			want[c] = true
+		}
+	}
+	for shell, seen := range want {
+		if !seen {
+			t.Errorf("%q not offered after `hunch completions `, got %v", shell, got)
+		}
+	}
+}
+
+func TestFishStillOffersFlags(t *testing.T) {
+	got := fishComplete(t, "hunch -")
+	if len(got) < 12 {
+		t.Errorf("expected every flag in both dash forms, got %d: %v", len(got), got)
 	}
 }

@@ -1,4 +1,4 @@
-module github.com/souhoc/hunch
+module github.com/souhoc/hunch/v2
 
 go 1.27
 

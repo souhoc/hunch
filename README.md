@@ -18,7 +18,7 @@ Diff and doc are truncated (`-max-diff`, `-max-doc`) so a huge PR does not blow 
 ## Install
 
 ```sh
-go install github.com/souhoc/hunch@latest
+go install github.com/souhoc/hunch/v2@latest
 ```
 
 The API key comes from `TYPESAFE_API_KEY`, or from [skate](https://github.com/charmbracelet/skate):

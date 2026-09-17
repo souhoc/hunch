@@ -27,6 +27,11 @@ var (
 
 const barWidth = 20
 
+// redAt is the goodness at or below which an answer renders red — and, for a
+// Blocks criterion, overrides an approving verdict. One threshold for both, so
+// the report can never paint a criterion green and block on it at the same time.
+const redAt = 0.33
+
 func fg(c lipgloss.TerminalColor) lipgloss.Style { return lipgloss.NewStyle().Foreground(c) }
 
 // report prints one block per criterion, verdict first.
@@ -44,6 +49,12 @@ func report(w io.Writer, pr PR, docName string, questions map[string]Question, r
 	fmt.Fprintln(w, headerBox.Render(header))
 	fmt.Fprintln(w)
 
+	if ids := blockers(questions, resp.Answers); len(ids) > 0 {
+		fmt.Fprintln(w, fg(red).Bold(true).Render("⛔ approval blocked by "+strings.Join(ids, ", "))+
+			mutedStyle.Render("  whatever verdict says"))
+		fmt.Fprintln(w)
+	}
+
 	for _, id := range orderedIDs(resp.Answers) {
 		q := questions[id]
 		fmt.Fprintln(w, renderAnswer(id, q, resp.Answers[id]))
@@ -58,17 +69,32 @@ func report(w io.Writer, pr PR, docName string, questions map[string]Question, r
 
 // nextStep turns the code_review_effort answer into the command to run.
 // Custom rubrics without that criterion get nothing.
+//
+// A blocked report never gets the green all-clear. A committed secret often sits
+// in a one-line, trivially-shaped diff, which is exactly when the model answers
+// "skip" — and the last line of the report is the one that gets read, so it must
+// not say "nothing to find" while the banner above says otherwise.
 func nextStep(pr PR, questions map[string]Question, answers map[string]Answer) string {
 	a, ok := answers["code_review_effort"]
 	if !ok || a.Choice == "" {
 		return ""
 	}
-	if a.Choice == "skip" {
-		return fg(green).Render("→ no code review needed") + mutedStyle.Render("  (nothing to find in this diff)")
+	level, blocked := a.Choice, blockers(questions, answers)
+	g := goodness(questions["code_review_effort"], a)
+	if len(blocked) > 0 {
+		g = 0 // a blocked diff is not a clean bill, whatever the effort answer says
 	}
-	return fg(colorOf(goodness(questions["code_review_effort"], a))).Bold(true).
-		Render(fmt.Sprintf("→ /code-review %s %d", a.Choice, pr.Number)) +
-		mutedStyle.Render("  in "+pr.owner+"/"+pr.repo)
+	if level == "skip" {
+		if len(blocked) == 0 {
+			return fg(green).Render("→ no code review needed") + mutedStyle.Render("  (nothing to find in this diff)")
+		}
+		level = "high" // the blocker is the thing to find
+	}
+	line := fg(colorOf(g)).Bold(true).Render(fmt.Sprintf("→ /code-review %s %d", level, pr.Number))
+	if len(blocked) > 0 {
+		return line + mutedStyle.Render("  "+strings.Join(blocked, ", ")+" blocks approval")
+	}
+	return line + mutedStyle.Render("  in "+pr.owner+"/"+pr.repo)
 }
 
 // orderedIDs sorts ids alphabetically but keeps "verdict" on top.
@@ -83,6 +109,22 @@ func orderedIDs(answers map[string]Answer) []string {
 		}
 		return ids[i] < ids[j]
 	})
+	return ids
+}
+
+// blockers lists the criteria answered badly enough to override an approving
+// verdict. verdict is the weakest scored criterion in the rubric and carries an
+// approve bias, so a confident "yes, this removes a security control" has to beat
+// it rather than sit below it in the list. A rubric that marks nothing Blocks
+// gets no banner.
+func blockers(questions map[string]Question, answers map[string]Answer) []string {
+	var ids []string
+	for id, a := range answers {
+		if q := questions[id]; q.Blocks && goodness(q, a) <= redAt {
+			ids = append(ids, id)
+		}
+	}
+	sort.Strings(ids)
 	return ids
 }
 
@@ -192,7 +234,7 @@ func colorOf(g float64) lipgloss.TerminalColor {
 	switch {
 	case g >= 0.66:
 		return green
-	case g <= 0.33:
+	case g <= redAt:
 		return red
 	default:
 		return amber

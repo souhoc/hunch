@@ -69,22 +69,42 @@ CI runs the same checks on every push and pull request.
 | `verdict` | choice | approve / comment / request_changes |
 | `code_review_effort` | choice | skip / low / medium / high / max — how deep a `/code-review` this deserves |
 | `description_matches_diff` | noul | does the body describe what the diff does |
-| `follows_project_conventions` | noul | respects CLAUDE.md / README rules |
 | `in_scope` | noul | one coherent change, no drive-by churn |
-| `test_coverage` | noul | new behaviour has tests |
-| `leaks_secrets` | noul | credentials or customer data committed |
+| `leaks_secrets` | noul | credentials or customer data committed — **blocks** |
+| `weakens_security` | noul | an existing control removed or loosened — **blocks** |
 | `correctness_risk` | score | 0 safe → 3 high |
 | `unneeded_complexity` | score | 0 simplest → 3 framework-scale |
 | `review_effort` | score | 0 minutes → 3 should be split |
+| `diff_dilution` | score | 0 concentrated → 3 several changes in one PR |
+| `comment_noise` | score | 0 comments earn their place → 3 verbose or narrating |
 
 They live in `criteria.go`. Edit there for a permanent change, or use `-questions` for a one-off.
 
-Two extra fields drive the colours and are stripped before the request is sent:
+`follows_project_conventions` and `test_coverage` used to be here and were dropped:
+measured against human review decisions they scored 0.46 and 0.20 AUC, where 0.5 is
+a coin flip. See `CLAUDE.md` before re-adding either.
+
+Three extra fields are ours, and are stripped before the request is sent:
 
 - `good` — `"yes"` / `"no"` for a noul, `"low"` / `"high"` for a score
 - `good_choices` — for a choice: option → `0` (bad) .. `1` (good)
+- `blocks` — a red answer here prints a banner above the report and overrides an
+  approving verdict
 
-Leave them out and the criterion renders amber.
+Leave `good` out and the criterion renders amber.
+
+## Blocking
+
+`verdict` is the weakest scored criterion in the rubric and carries an approve
+bias, so two criteria outrank it. When either answers red, the report opens with:
+
+```
+⛔ approval blocked by weakens_security  whatever verdict says
+```
+
+On a real pull request disabling TLS certificate verification, `verdict` said
+`comment` at 61% while `weakens_security` said `yes` at 83%. The banner is there so
+the strongest signal is not the one you have to scroll to.
 
 ## The next-step line
 

@@ -15,16 +15,17 @@ type Question struct {
 	Instructions string `json:"instructions"`
 	Criteria     any    `json:"criteria,omitempty"`
 
-	// Good and GoodChoices never reach the API; apiQuestions strips them.
+	// Good, GoodChoices and Blocks never reach the API; apiQuestions strips them.
 	Good        string             `json:"good,omitempty"`
 	GoodChoices map[string]float64 `json:"good_choices,omitempty"` // choice option -> 0 bad .. 1 good
+	Blocks      bool               `json:"blocks,omitempty"`       // a red answer here overrides an approving verdict
 }
 
 // apiQuestions drops the display-only fields so the request body stays valid.
 func apiQuestions(questions map[string]Question) map[string]Question {
 	out := make(map[string]Question, len(questions))
 	for id, q := range questions {
-		q.Good, q.GoodChoices = "", nil
+		q.Good, q.GoodChoices, q.Blocks = "", nil, false
 		out[id] = q
 	}
 	return out
@@ -65,30 +66,12 @@ func defaultQuestions() map[string]Question {
 			},
 			Good: GoodYes,
 		},
-		"follows_project_conventions": {
-			Type:         "noul",
-			Instructions: "Does the diff follow the conventions stated in the project guidelines (naming, structure, error handling, commit and PR rules)?",
-			Criteria: map[string]string{
-				"true":  "Consistent with the guidelines and with surrounding code",
-				"false": "Contradicts a stated rule, or introduces a pattern the project does not use",
-			},
-			Good: GoodYes,
-		},
 		"in_scope": {
 			Type:         "noul",
 			Instructions: "Is every hunk in the diff justified by the stated purpose of the pull request?",
 			Criteria: map[string]string{
 				"true":  "One coherent change; no drive-by refactors, reformatting, or unrelated files",
 				"false": "Mixes unrelated work, opportunistic renames, or noisy formatting churn",
-			},
-			Good: GoodYes,
-		},
-		"test_coverage": {
-			Type:         "noul",
-			Instructions: "Is the new or changed behaviour covered by tests added in this diff?",
-			Criteria: map[string]string{
-				"true":  "New behaviour has tests, or the change genuinely needs none (docs, config)",
-				"false": "Adds or changes logic with no matching test",
 			},
 			Good: GoodYes,
 		},
@@ -99,7 +82,8 @@ func defaultQuestions() map[string]Question {
 				"true":  "A real-looking secret or personal data is committed",
 				"false": "No secrets; placeholders and env lookups only",
 			},
-			Good: GoodNo,
+			Good:   GoodNo,
+			Blocks: true,
 		},
 		"weakens_security": {
 			Type: "noul",
@@ -109,7 +93,8 @@ func defaultQuestions() map[string]Question {
 				"true":  "A control that existed is removed, made optional, or narrowed",
 				"false": "No control weakened; checks added, unchanged, or moved intact",
 			},
-			Good: GoodNo,
+			Good:   GoodNo,
+			Blocks: true,
 		},
 		"correctness_risk": {
 			Type:         "score",

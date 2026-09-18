@@ -54,3 +54,8 @@ tasks:
     deps: [cover]
     cmds:
       - go tool cover -html=coverage.out
+
+  eval:
+    desc: Re-run the accuracy harness against the pinned PR corpus
+    cmds:
+      - go run . eval eval/corpus.json

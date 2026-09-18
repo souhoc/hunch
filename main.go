@@ -32,6 +32,11 @@ func main() {
 		return
 	}
 
+	logf := func(format string, a ...any) {}
+	if o.verbose {
+		logf = func(format string, a ...any) { log.Printf(format, a...) }
+	}
+
 	questions := defaultQuestions()
 	if o.qFile != "" {
 		var err error
@@ -44,19 +49,41 @@ func main() {
 		return
 	}
 
+	if flag.Arg(0) == "eval" {
+		if flag.NArg() < 2 {
+			fmt.Fprintln(os.Stderr, "usage: hunch eval <corpus.json>")
+			os.Exit(2)
+		}
+		corpus, err := loadCorpus(flag.Arg(1))
+		if err != nil {
+			log.Fatal(err)
+		}
+		apiKey, err := apiKey(o.keyName)
+		if err != nil {
+			log.Fatal(err)
+		}
+		c := newClient(o, apiKey, logf)
+		results := runEval(c, questions, corpus, o, logf)
+		if !anySucceeded(results) {
+			log.Fatal("all PRs failed, nothing to score")
+		}
+		if o.asJSON {
+			printJSON(results)
+			return
+		}
+		printAUCTable(os.Stdout, aucTable(results, questions))
+		return
+	}
+
 	if flag.NArg() != 1 {
 		fmt.Fprintf(os.Stderr, "usage: hunch [flags] <pull request url>\n")
 		fmt.Fprintf(os.Stderr, "       hunch completions %s\n", strings.Join(supportedShells, "|"))
-		fmt.Fprintf(os.Stderr, "       hunch version\n\n")
+		fmt.Fprintf(os.Stderr, "       hunch version\n")
+		fmt.Fprintf(os.Stderr, "       hunch eval <corpus.json>\n\n")
 		flag.PrintDefaults()
 		os.Exit(2)
 	}
 	url := flag.Arg(0)
-
-	logf := func(format string, a ...any) {}
-	if o.verbose {
-		logf = func(format string, a ...any) { log.Printf(format, a...) }
-	}
 
 	logf("fetching pull request")
 	pr, err := fetchPR(url)
@@ -89,13 +116,7 @@ func main() {
 	}
 
 	logf("evaluating %d criteria", len(questions))
-	c := &client{
-		apiKey:  apiKey,
-		model:   o.model,
-		http:    &http.Client{Timeout: 5 * time.Minute},
-		retries: o.retries,
-		logf:    logf,
-	}
+	c := newClient(o, apiKey, logf)
 	resp, err := c.evaluate(state, apiQuestions(questions))
 	if err != nil {
 		log.Fatal(err)
@@ -106,6 +127,17 @@ func main() {
 		return
 	}
 	report(os.Stdout, pr, docName, questions, resp, o.price)
+}
+
+// newClient builds the TypeSafe client shared by a normal run and `hunch eval`.
+func newClient(o *options, apiKey string, logf func(format string, a ...any)) *client {
+	return &client{
+		apiKey:  apiKey,
+		model:   o.model,
+		http:    &http.Client{Timeout: 5 * time.Minute},
+		retries: o.retries,
+		logf:    logf,
+	}
 }
 
 func loadQuestions(path string) (map[string]Question, error) {

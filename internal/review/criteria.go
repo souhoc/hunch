@@ -181,3 +181,79 @@ func Default() map[string]Question {
 		},
 	}
 }
+
+// DefaultComment is the rubric for `hunch comment`: one piece of code, judged
+// on its doc comment (out) and its inline comments (in). Missing and excessive
+// commentary are separate criteria on purpose — one "comment quality" score
+// would average two opposite failures into amber.
+func DefaultComment() map[string]Question {
+	return map[string]Question{
+		"doc_contract": {
+			Type: "score",
+			Instructions: "Does the doc comment above the code tell a caller what the signature cannot: " +
+				"what it does, its errors, side effects, preconditions, units?",
+			Criteria: []string{
+				"Contract: states what the signature cannot",
+				"Partial: some of the contract, gaps a caller would hit",
+				"Echo: restates the name or the signature",
+				"Missing: no doc comment at all",
+			},
+			Good: GoodLow,
+		},
+		"doc_accurate": {
+			Type:         "noul",
+			Instructions: "Does the doc comment match what the code actually does? Answer true if there is no doc comment.",
+			Criteria: map[string]string{
+				"true":  "Every claim in the doc comment holds for the code below it, or there is none",
+				"false": "The doc comment is stale, wrong, or promises behaviour the code does not have",
+			},
+			Good: GoodYes,
+		},
+		"inline_why": {
+			Type: "score",
+			Instructions: "Inside the body, does every non-obvious line carry its why — a magic number, a " +
+				"workaround, an odd branch, an ordering that matters?",
+			Criteria: []string{
+				"Covered: every non-obvious spot is explained, or there are none",
+				"Mostly: one minor spot left bare",
+				"Gaps: tricky spots a reader would stop at are unexplained",
+				"Bare: subtle code with no explanation at all",
+			},
+			Good: GoodLow,
+		},
+		"inline_noise": {
+			Type: "score",
+			Instructions: "How many inline comments should not exist at all? A good comment explains why the code " +
+				"is the way it is. A bad one restates the code, narrates its history, or addresses a reviewer. " +
+				"Judge whether each comment should exist, not its length.",
+			Criteria: []string{
+				"Clean: every comment explains why, or none were needed",
+				"Slight: some restating of what the code already says",
+				"Narrating: comments tell the history of the change instead of the code",
+				"Heavy: commented-out code, or notes aimed at a reviewer",
+			},
+			Good: GoodLow,
+		},
+		"inline_accurate": {
+			Type:         "noul",
+			Instructions: "Does every inline comment agree with the code next to it? Answer true if there are no inline comments.",
+			Criteria: map[string]string{
+				"true":  "Every inline comment agrees with its code, or there are none",
+				"false": "At least one comment describes behaviour the adjacent code does not have",
+			},
+			Good: GoodYes,
+		},
+		"comment_length": {
+			Type: "score",
+			Instructions: "Across the doc comment and inline comments, is each comment as short as it can be " +
+				"without losing information? Judge only excess length; a comment that is too terse is not a length problem.",
+			Criteria: []string{
+				"Tight: every sentence carries information",
+				"Wordy: could lose a third without losing meaning",
+				"Padded: filler, hedging, or repetition",
+				"Essay: comments longer than the code they explain",
+			},
+			Good: GoodLow,
+		},
+	}
+}

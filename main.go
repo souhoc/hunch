@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -18,7 +19,7 @@ import (
 	"github.com/souhoc/hunch/v2/internal/typesafe"
 )
 
-// cli is the whole command line. Flags shared by review and eval sit on the
+// cli is the whole command line. Flags shared by the subcommands sit on the
 // root; completions.go reads them back from the kong model, so they cannot drift.
 type cli struct {
 	Model     string   `default:"jev-latest" help:"TypeSafe model."`
@@ -31,7 +32,8 @@ type cli struct {
 	JSON      bool     `name:"json" help:"Print the raw API response."`
 	Verbose   bool     `short:"v" help:"Log progress to stderr."`
 
-	Review      reviewCmd      `cmd:"" default:"withargs" help:"Review a pull request (the default command)."`
+	PR          prCmd          `cmd:"" name:"pr" default:"withargs" help:"Review a pull request (the default command)."`
+	Comment     commentCmd     `cmd:"" help:"Judge the comments of code read from stdin."`
 	Eval        evalCmd        `cmd:"" help:"Score the rubric against a corpus of reviewed pull requests."`
 	Completions completionsCmd `cmd:"" help:"Print a shell completion script."`
 	Version     versionCmd     `cmd:"" help:"Print the version."`
@@ -59,15 +61,15 @@ func main() {
 	ctx.FatalIfErrorf(ctx.Run(&c))
 }
 
-type reviewCmd struct {
+type prCmd struct {
 	URL           string  `arg:"" optional:"" help:"Pull request URL."`
 	Price         float64 `default:"${price}" help:"USD per million input tokens, for the cost line."`
 	DumpQuestions bool    `help:"Print the criteria as JSON and exit."`
 	DumpState     bool    `help:"Print the state that would be sent and exit (no API call)."`
 }
 
-func (r *reviewCmd) Run(c *cli) error {
-	questions, err := c.questions()
+func (r *prCmd) Run(c *cli) error {
+	questions, err := c.questions(review.Default())
 	if err != nil {
 		return err
 	}
@@ -103,12 +105,76 @@ func (r *reviewCmd) Run(c *cli) error {
 	return nil
 }
 
+type commentCmd struct {
+	Price         float64 `default:"${price}" help:"USD per million input tokens, for the cost line."`
+	DumpQuestions bool    `help:"Print the criteria as JSON and exit."`
+	DumpState     bool    `help:"Print the state that would be sent and exit (no API call)."`
+}
+
+// codeState is what `hunch comment` sends: the code, and nothing else.
+type codeState struct {
+	Code string `json:"code"`
+}
+
+func (cm *commentCmd) Run(c *cli) error {
+	questions, err := c.questions(review.DefaultComment())
+	if err != nil {
+		return err
+	}
+	if cm.DumpQuestions {
+		return printJSON(questions)
+	}
+
+	code, err := readCode(os.Stdin)
+	if err != nil {
+		return err
+	}
+	state := codeState{Code: code}
+	if cm.DumpState {
+		return printJSON(state)
+	}
+
+	client, err := c.client()
+	if err != nil {
+		return err
+	}
+	c.logf("evaluating %d criteria on %d bytes of code", len(questions), len(code))
+	resp, err := client.Evaluate(state, review.APIQuestions(questions))
+	if err != nil {
+		return err
+	}
+
+	if c.JSON {
+		return printJSON(resp)
+	}
+	review.CommentReport(os.Stdout, strings.Count(strings.TrimRight(code, "\n"), "\n")+1, questions, resp, cm.Price)
+	return nil
+}
+
+// readCode reads the code to judge. A terminal on stdin means nothing was
+// piped, and ReadAll would sit waiting for input the user never meant to type.
+// Blank input is an error for the same reason an empty diff is: the model
+// would return a confident verdict about nothing.
+func readCode(f *os.File) (string, error) {
+	if fi, err := f.Stat(); err == nil && fi.Mode()&os.ModeCharDevice != 0 {
+		return "", errors.New("no code on stdin: pipe it in, e.g. hunch comment < main.go")
+	}
+	raw, err := io.ReadAll(f)
+	if err != nil {
+		return "", fmt.Errorf("read stdin: %w", err)
+	}
+	if strings.TrimSpace(string(raw)) == "" {
+		return "", errors.New("empty stdin: nothing to judge")
+	}
+	return string(raw), nil
+}
+
 type evalCmd struct {
 	Corpus string `arg:"" type:"existingfile" help:"Corpus JSON, e.g. eval/corpus.json."`
 }
 
 func (e *evalCmd) Run(c *cli) error {
-	questions, err := c.questions()
+	questions, err := c.questions(review.Default())
 	if err != nil {
 		return err
 	}
@@ -158,9 +224,10 @@ func (c *cli) logf(format string, a ...any) {
 	}
 }
 
-func (c *cli) questions() (map[string]review.Question, error) {
+// questions is the --questions file if one was given, else defaults.
+func (c *cli) questions(defaults map[string]review.Question) (map[string]review.Question, error) {
 	if c.Questions == "" {
-		return review.Default(), nil
+		return defaults, nil
 	}
 	return review.Load(c.Questions)
 }

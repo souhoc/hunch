@@ -37,6 +37,9 @@ hunch -v --json https://github.com/owner/repo/pull/123
 hunch --dump-state https://github.com/owner/repo/pull/123   # see the payload, no API call
 hunch --dump-questions > my-rubric.json                     # start from the defaults
 hunch --questions my-rubric.json https://github.com/owner/repo/pull/123
+hunch pr https://github.com/owner/repo/pull/123            # same as above, pr is the default
+hunch comment < handler.go                                  # judge the comments in a piece of code
+pbpaste | hunch comment                                     # ...or a function copied from an editor
 hunch eval eval/corpus.json                                 # AUC of each criterion vs human reviews
 hunch version
 ```
@@ -84,7 +87,7 @@ CI runs the same checks on every push and pull request.
 | `diff_dilution` | score | 0 concentrated → 3 several changes in one PR |
 | `comment_noise` | score | 0 comments earn their place → 3 verbose or narrating |
 
-They live in `internal/review/criteria.go`. Edit there for a permanent change, or use `--questions` for a one-off.
+These are the `pr` criteria. They live in `internal/review/criteria.go`. Edit there for a permanent change, or use `--questions` for a one-off.
 
 `follows_project_conventions` and `test_coverage` used to be here and were dropped:
 measured against human review decisions they scored 0.46 and 0.20 AUC, where 0.5 is
@@ -98,6 +101,23 @@ Three extra fields are ours, and are stripped before the request is sent:
   approving verdict
 
 Leave `good` out and the criterion renders amber.
+
+## Comment criteria
+
+`hunch comment` reads code from stdin and judges its comments, outside (the doc
+comment) and inside (the body):
+
+| id | type | asks |
+| --- | --- | --- |
+| `doc_contract` | score | 0 states what the signature cannot → 3 no doc comment |
+| `doc_accurate` | noul | the doc comment matches what the code does |
+| `inline_why` | score | 0 every non-obvious line explained → 3 subtle code left bare |
+| `inline_noise` | score | 0 every comment earns its place → 3 commented-out code, notes to a reviewer |
+| `inline_accurate` | noul | every inline comment agrees with its code |
+| `comment_length` | score | 0 tight → 3 comments longer than the code |
+
+`hunch comment --dump-questions` prints them; `--questions` overrides them the
+same way it does for `pr`. They are unmeasured — see `CLAUDE.md`.
 
 ## Blocking
 

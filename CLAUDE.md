@@ -39,7 +39,7 @@ Requires `gh` installed and authenticated. The API key comes from
 ## Flow
 
 `main.go` is the [kong](https://github.com/alecthomas/kong) CLI: the `cli`
-struct holds the shared flags, one `*Cmd` struct per subcommand (`review` is the
+struct holds the shared flags, one `*Cmd` struct per subcommand (`pr` is the
 default, so `hunch <url>` works). Each stage lives in its own `internal/` package:
 
 1. `internal/github` — shells out to `gh` three times: `pr view --json` (body,
@@ -50,6 +50,11 @@ default, so `hunch <url>` works). Each stage lives in its own `internal/` packag
 3. `internal/review` — the rubric (`criteria.go`, `Default()`, overridable with
    `--questions`) and the lipgloss report (`render.go`, plain text when piped).
 4. `internal/eval` — `hunch eval`: runs the rubric over a corpus, scores AUC.
+
+`hunch comment` is a second, smaller flow: it reads code from stdin, sends
+`{"code": ...}` with `review.DefaultComment()`, and prints `review.CommentReport`
+— the same answer blocks with no `Blocks` banner and no next-step line, since
+both are about approving a pull request.
 
 ## Invariants that are easy to break
 
@@ -74,7 +79,7 @@ default, so `hunch <url>` works). Each stage lives in its own `internal/` packag
   prints nothing. This is the only id the renderer knows by name — keep it that way
   rather than growing a generic hook for one instance.
 - **Completions are generated from the kong model, never a hand-kept list.**
-  `cliFlags` walks the root flags plus the default `review` command's; a flag
+  `cliFlags` walks the root flags plus the default `pr` command's; a flag
   offers files when tagged `type:"existingfile"`. Tests build the model with
   `newParser(&cli{})`, never from `os.Args`. Subcommands, `completions` above all,
   stay absent from the output.
@@ -161,6 +166,51 @@ Two things follow when tuning the rubric:
 
 Merge-vs-close is **not** usable ground truth: closures are dominated by CLA
 bots, duplicates and supersession, none of which are visible in the diff.
+
+## The `comment` rubric (unmeasured)
+
+Six criteria, split by where the comment sits: `doc_contract` and
+`doc_accurate` judge the doc comment above the code; `inline_why`,
+`inline_noise` and `inline_accurate` judge comments in the body;
+`comment_length` spans both. Missing and excessive commentary are deliberately
+separate criteria — `inline_why` asks whether comments are missing,
+`inline_noise` whether one should exist at all, `comment_length` whether a
+comment that should exist is longer than it needs to be. Terse is not a length
+problem: it shows up in `doc_contract` or `inline_why` instead, so one short
+comment is not punished twice.
+
+No ground truth, no AUC. One run each on two samples: a deliberately noisy
+`truncate` (doc `Truncate truncates.`, a 40-word restating comment, `// return s`,
+commented-out code) and `fetchDiff` from this repo (a two-line doc that explains
+why an empty diff is an error, no inline comments):
+
+```
+                  noisy                clean
+comment_length    Padded 76%           Tight 65%
+doc_contract      Echo 93%             Partial 53%
+inline_noise      Heavy 93%            Clean 82%
+inline_accurate   26% yes (no)         82% yes
+doc_accurate      32% yes (no)         54% yes (unclear)
+inline_why        Gaps 21% conf.       Mostly 42% conf.
+```
+
+`comment_length`, `doc_contract` and `inline_noise` separated the two cleanly.
+`inline_accurate` did too — the noisy sample's `// returns the first maxBytes
+bytes` is wrong, the function also appends a marker. `doc_accurate` sat near
+the red/amber line on the noisy sample and was unclear on the clean one, and
+`inline_why` answered at low confidence on both, which is the model saying it
+does not know. Treat those two as unproven until a spot-check on a wider set of
+shapes (stale doc, subtle algorithm, workaround) says otherwise.
+
+**Name the criterion the way its `true` reads.** `inline_accurate` first asked
+"does any inline comment contradict the code?" with `Good: no`. The colours
+were right but the headline read backwards — accurate comments printed
+`inline_accurate → no` in green — and the id said the opposite of the question
+sent with it. On the noisy sample that version answered `unclear`; flipped to
+"does every inline comment agree?" with `Good: yes`, the same sample came back a
+clear `no` (26% yes). One run, so that is a direction, not proof that the
+mismatched id confused the model — but an id and its question should never
+disagree.
 
 ## Scaling the measurement to n=25 (`eval/corpus.json`)
 

@@ -1,4 +1,13 @@
-package main
+// Package review holds the rubric and renders the answers to it.
+package review
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+
+	"github.com/souhoc/hunch/v2/internal/typesafe"
+)
 
 // Which answer is the good one. Display only — used to colour the report.
 const (
@@ -8,31 +17,47 @@ const (
 	GoodHigh = "high" // score: the top level is good
 )
 
-// Question is one typed question sent to TypeSafe.
-// Criteria is: object (noul), map[string]string (choice), []string (score).
+// Question is one rubric criterion: a typesafe.Question plus the fields that
+// colour the report. Criteria is: object (noul), map[string]string (choice),
+// []string (score).
 type Question struct {
 	Type         string `json:"type"`
 	Instructions string `json:"instructions"`
 	Criteria     any    `json:"criteria,omitempty"`
 
-	// Good, GoodChoices and Blocks never reach the API; apiQuestions strips them.
+	// Good, GoodChoices and Blocks never reach the API; APIQuestions drops them.
 	Good        string             `json:"good,omitempty"`
 	GoodChoices map[string]float64 `json:"good_choices,omitempty"` // choice option -> 0 bad .. 1 good
 	Blocks      bool               `json:"blocks,omitempty"`       // a red answer here overrides an approving verdict
 }
 
-// apiQuestions drops the display-only fields so the request body stays valid.
-func apiQuestions(questions map[string]Question) map[string]Question {
-	out := make(map[string]Question, len(questions))
+// APIQuestions drops the display-only fields so the request body stays valid.
+func APIQuestions(questions map[string]Question) map[string]typesafe.Question {
+	out := make(map[string]typesafe.Question, len(questions))
 	for id, q := range questions {
-		q.Good, q.GoodChoices, q.Blocks = "", nil, false
-		out[id] = q
+		out[id] = typesafe.Question{Type: q.Type, Instructions: q.Instructions, Criteria: q.Criteria}
 	}
 	return out
 }
 
-// defaultQuestions is the proposed review rubric. Override with -questions file.json.
-func defaultQuestions() map[string]Question {
+// Load reads a rubric from a JSON file, in the shape Default marshals to.
+func Load(path string) (map[string]Question, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var q map[string]Question
+	if err := json.Unmarshal(raw, &q); err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	if len(q) == 0 {
+		return nil, fmt.Errorf("%s: no questions", path)
+	}
+	return q, nil
+}
+
+// Default is the proposed review rubric. Override with --questions file.json.
+func Default() map[string]Question {
 	return map[string]Question{
 		"verdict": {
 			Type:         "choice",

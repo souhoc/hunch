@@ -1,45 +1,58 @@
 package main
 
 import (
-	"flag"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/alecthomas/kong"
 )
 
-func testFlagSet() *flag.FlagSet {
-	fs := flag.NewFlagSet("hunch", flag.ContinueOnError)
-	registerFlags(fs)
-	return fs
+// testModel builds the real CLI model; go test has flags of its own, so tests
+// never look at os.Args.
+func testModel(t *testing.T) *kong.Node {
+	t.Helper()
+	p, err := newParser(&cli{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p.Model.Node
 }
 
 // Every flag must be offered by every shell, or completion quietly goes stale.
 func TestCompletionsCoverEveryFlag(t *testing.T) {
-	fs := testFlagSet()
+	root := testModel(t)
 	var names []string
-	fs.VisitAll(func(f *flag.Flag) { names = append(names, f.Name) })
+	for _, f := range append(root.Flags, root.DefaultCmd.Flags...) {
+		names = append(names, f.Name)
+	}
 	if len(names) < 10 {
 		t.Fatalf("expected the real flag set, got %v", names)
 	}
 
 	// Each shell spells a flag differently; a bare substring match would also
-	// accept "-questions" inside "-dump-questions".
-	spelling := map[string]func(string) string{
-		"bash": func(n string) string { return "-" + n + " --" + n },
-		"fish": func(n string) string { return "-o " + n + " -l " + n + " " },
-		"zsh":  func(n string) string { return "'-" + n + "[" },
+	// accept "--questions" inside "--dump-questions".
+	// zsh spells a flag with a short form as {-v,--verbose}.
+	spelling := map[string]func(string) []string{
+		"bash": func(n string) []string { return []string{"--" + n} },
+		"fish": func(n string) []string { return []string{"-l " + n + " "} },
+		"zsh":  func(n string) []string { return []string{"--" + n + "[", "--" + n + "}"} },
 	}
 
 	for _, shell := range supportedShells {
-		script, err := completions(shell, fs)
+		script, err := completions(shell, root)
 		if err != nil {
 			t.Fatal(err)
 		}
 		for _, name := range names {
-			if want := spelling[shell](name); !strings.Contains(script, want) {
-				t.Errorf("%s completions omit %q", shell, want)
+			found := false
+			for _, want := range spelling[shell](name) {
+				found = found || strings.Contains(script, want)
+			}
+			if !found {
+				t.Errorf("%s completions omit %q", shell, name)
 			}
 		}
 	}
@@ -48,7 +61,7 @@ func TestCompletionsCoverEveryFlag(t *testing.T) {
 // The subcommand must not be offered while completing a real invocation.
 func TestCompletionsOmitTheSubcommand(t *testing.T) {
 	for _, shell := range supportedShells {
-		script, _ := completions(shell, testFlagSet())
+		script, _ := completions(shell, testModel(t))
 		for _, line := range strings.Split(script, "\n") {
 			if strings.HasPrefix(strings.TrimSpace(line), "#") {
 				continue // install hints name it, that is fine
@@ -61,11 +74,12 @@ func TestCompletionsOmitTheSubcommand(t *testing.T) {
 }
 
 func TestFishMarksArgumentFlags(t *testing.T) {
-	script := fishCompletions(testFlagSet())
+	script := fishCompletions(testModel(t))
 	for _, tc := range []struct{ line, want string }{
-		{"complete -c hunch -o json -l json", ""},              // bool: no argument
-		{"complete -c hunch -o model -l model", " -r"},         // string: takes one
-		{"complete -c hunch -o questions -l questions", " -F"}, // path: complete files
+		{"complete -c hunch -l json ", ""},         // bool: no argument
+		{"complete -c hunch -l model ", " -r"},     // string: takes one
+		{"complete -c hunch -l questions ", " -F"}, // path: complete files
+		{"complete -c hunch -l verbose -s v", ""},  // short form offered too
 	} {
 		var found string
 		for _, line := range strings.Split(script, "\n") {
@@ -87,7 +101,7 @@ func TestFishMarksArgumentFlags(t *testing.T) {
 
 func TestCompletionsRejectUnknownShell(t *testing.T) {
 	for _, shell := range []string{"", "ksh", "powershell"} {
-		if _, err := completions(shell, testFlagSet()); err == nil {
+		if _, err := completions(shell, testModel(t)); err == nil {
 			t.Errorf("%q was accepted", shell)
 		} else if !strings.Contains(err.Error(), "bash, fish, zsh") {
 			t.Errorf("error should list the shells, got: %v", err)
@@ -110,7 +124,7 @@ func TestGeneratedScriptsParse(t *testing.T) {
 			if err != nil {
 				t.Skipf("%s not installed", tc.bin)
 			}
-			script, err := completions(tc.shell, testFlagSet())
+			script, err := completions(tc.shell, testModel(t))
 			if err != nil {
 				t.Fatal(err)
 			}

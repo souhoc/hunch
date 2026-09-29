@@ -1,4 +1,6 @@
-package main
+// Package eval scores the rubric against a corpus of pull requests with known
+// human review decisions.
+package eval
 
 import (
 	"encoding/json"
@@ -7,8 +9,11 @@ import (
 	"log"
 	"os"
 	"sort"
-	"strings"
 	"text/tabwriter"
+
+	"github.com/souhoc/hunch/v2/internal/github"
+	"github.com/souhoc/hunch/v2/internal/review"
+	"github.com/souhoc/hunch/v2/internal/typesafe"
 )
 
 // CorpusEntry is one row of eval/corpus.json: a real pull request with its
@@ -24,8 +29,8 @@ type CorpusEntry struct {
 	Reason         string `json:"reason"`
 }
 
-// loadCorpus reads and validates a corpus file.
-func loadCorpus(path string) ([]CorpusEntry, error) {
+// LoadCorpus reads and validates a corpus file.
+func LoadCorpus(path string) ([]CorpusEntry, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -49,21 +54,21 @@ func loadCorpus(path string) ([]CorpusEntry, error) {
 	return entries, nil
 }
 
-// evalResult is one corpus entry's outcome: the answers hunch gave, or why
+// Result is one corpus entry's outcome: the answers hunch gave, or why
 // it was skipped.
-type evalResult struct {
-	URL     string            `json:"url"`
-	Label   bool              `json:"approved"`
-	Answers map[string]Answer `json:"answers,omitempty"`
-	Err     string            `json:"error,omitempty"`
+type Result struct {
+	URL     string                     `json:"url"`
+	Label   bool                       `json:"approved"`
+	Answers map[string]typesafe.Answer `json:"answers,omitempty"`
+	Err     string                     `json:"error,omitempty"`
 }
 
-// runEval gathers and evaluates every corpus entry the same way a normal
+// Run gathers and evaluates every corpus entry the same way a normal
 // single-PR run does. A failed entry is skipped, not fatal — 50 real network
 // calls will have some flakiness, and a partial result beats none.
-func runEval(c *client, questions map[string]Question, corpus []CorpusEntry, o *options, logf func(format string, a ...any)) []evalResult {
-	apiQ := apiQuestions(questions)
-	results := make([]evalResult, 0, len(corpus))
+func Run(c *typesafe.Client, questions map[string]review.Question, corpus []CorpusEntry, o github.Options, logf func(format string, a ...any)) []Result {
+	apiQ := review.APIQuestions(questions)
+	results := make([]Result, 0, len(corpus))
 	for i, entry := range corpus {
 		logf("evaluating %d/%d: %s", i+1, len(corpus), entry.URL)
 		r, err := evalOne(c, apiQ, o, entry)
@@ -76,20 +81,14 @@ func runEval(c *client, questions map[string]Question, corpus []CorpusEntry, o *
 	return results
 }
 
-func evalOne(c *client, apiQ map[string]Question, o *options, entry CorpusEntry) (evalResult, error) {
-	r := evalResult{URL: entry.URL, Label: entry.ReviewDecision == "approved"}
+func evalOne(c *typesafe.Client, apiQ map[string]typesafe.Question, o github.Options, entry CorpusEntry) (Result, error) {
+	r := Result{URL: entry.URL, Label: entry.ReviewDecision == "approved"}
 
-	pr, err := fetchPR(entry.URL)
+	state, err := github.Gather(entry.URL, o, func(string, ...any) {})
 	if err != nil {
 		return r, err
 	}
-	diff, err := fetchDiff(entry.URL, o.maxDiff)
-	if err != nil {
-		return r, err
-	}
-	_, guidelines := fetchGuidelines(pr, strings.Split(o.docNames, ","), o.maxDoc)
-
-	resp, err := c.evaluate(State{PR: pr, Guidelines: guidelines, Diff: diff}, apiQ)
+	resp, err := c.Evaluate(state, apiQ)
 	if err != nil {
 		return r, err
 	}
@@ -97,7 +96,8 @@ func evalOne(c *client, apiQ map[string]Question, o *options, entry CorpusEntry)
 	return r, nil
 }
 
-func anySucceeded(results []evalResult) bool {
+// AnySucceeded reports whether at least one entry has answers to score.
+func AnySucceeded(results []Result) bool {
 	for _, r := range results {
 		if r.Err == "" {
 			return true
@@ -106,19 +106,19 @@ func anySucceeded(results []evalResult) bool {
 	return false
 }
 
-// criterionAUC is one row of the accuracy report.
-type criterionAUC struct {
+// CriterionAUC is one row of the accuracy report.
+type CriterionAUC struct {
 	ID    string
 	AUC   float64
 	N     int
 	Valid bool // false: one label class was never seen, or nothing answered
 }
 
-// aucTable scores every criterion that appears in the results against the
-// corpus's ground-truth label, using the same goodness() polarity math the
+// AUCTable scores every criterion that appears in the results against the
+// corpus's ground-truth label, using the same review.Goodness polarity math the
 // normal report already renders with — so a criterion's AUC here means
 // exactly what its colour means in a single-PR report.
-func aucTable(results []evalResult, questions map[string]Question) []criterionAUC {
+func AUCTable(results []Result, questions map[string]review.Question) []CriterionAUC {
 	scores := map[string][]float64{}
 	labels := map[string][]bool{}
 	for _, r := range results {
@@ -126,7 +126,7 @@ func aucTable(results []evalResult, questions map[string]Question) []criterionAU
 			if !answered(a) {
 				continue
 			}
-			scores[id] = append(scores[id], goodness(questions[id], a))
+			scores[id] = append(scores[id], review.Goodness(questions[id], a))
 			labels[id] = append(labels[id], r.Label)
 		}
 	}
@@ -137,10 +137,10 @@ func aucTable(results []evalResult, questions map[string]Question) []criterionAU
 	}
 	sort.Strings(ids)
 
-	table := make([]criterionAUC, 0, len(ids))
+	table := make([]CriterionAUC, 0, len(ids))
 	for _, id := range ids {
 		a, err := auc(scores[id], labels[id])
-		table = append(table, criterionAUC{ID: id, AUC: a, N: len(scores[id]), Valid: err == nil})
+		table = append(table, CriterionAUC{ID: id, AUC: a, N: len(scores[id]), Valid: err == nil})
 	}
 	sort.SliceStable(table, func(i, j int) bool {
 		if table[i].Valid != table[j].Valid {
@@ -153,7 +153,7 @@ func aucTable(results []evalResult, questions map[string]Question) []criterionAU
 
 // answered reports whether a has an actual value for its type, so an
 // unanswered question doesn't silently pad the AUC with a neutral score.
-func answered(a Answer) bool {
+func answered(a typesafe.Answer) bool {
 	switch a.Type {
 	case "noul":
 		return a.Noul != nil
@@ -216,8 +216,8 @@ func auc(scores []float64, labels []bool) (float64, error) {
 	return u / float64(nPos*nNeg), nil
 }
 
-// printAUCTable prints one row per scored criterion, most predictive first.
-func printAUCTable(w io.Writer, table []criterionAUC) {
+// PrintAUCTable prints one row per scored criterion, most predictive first.
+func PrintAUCTable(w io.Writer, table []CriterionAUC) {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "criterion\tauc\tn")
 	for _, row := range table {

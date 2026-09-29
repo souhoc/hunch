@@ -57,13 +57,29 @@ func Report(w io.Writer, pr github.PR, docName string, questions map[string]Ques
 		fmt.Fprintln(w)
 	}
 
+	answers(w, questions, resp)
+	fmt.Fprintln(w, nextStep(pr, questions, resp.Answers))
+	usage(w, resp, pricePerMTok)
+}
+
+// CommentReport prints the `hunch comment` answers. No banner and no next
+// step: both are about approving a pull request.
+func CommentReport(w io.Writer, lines int, questions map[string]Question, resp *typesafe.Response, pricePerMTok float64) {
+	header := titleStyle.Render("comments") + mutedStyle.Render(fmt.Sprintf("  %d %s from stdin", lines, plural(lines, "line")))
+	fmt.Fprintln(w, headerBox.Render(header))
+	fmt.Fprintln(w)
+	answers(w, questions, resp)
+	usage(w, resp, pricePerMTok)
+}
+
+func answers(w io.Writer, questions map[string]Question, resp *typesafe.Response) {
 	for _, id := range orderedIDs(resp.Answers) {
-		q := questions[id]
-		fmt.Fprintln(w, renderAnswer(id, q, resp.Answers[id]))
+		fmt.Fprintln(w, renderAnswer(id, questions[id], resp.Answers[id]))
 		fmt.Fprintln(w)
 	}
+}
 
-	fmt.Fprintln(w, nextStep(pr, questions, resp.Answers))
+func usage(w io.Writer, resp *typesafe.Response, pricePerMTok float64) {
 	cost := float64(resp.Usage.InputTokens) / 1e6 * pricePerMTok
 	fmt.Fprintln(w, mutedStyle.Render(fmt.Sprintf("%s  ·  %d in / %d out tokens  ·  %s  (output free)",
 		resp.Model, resp.Usage.InputTokens, resp.Usage.OutputTokens, money(cost))))

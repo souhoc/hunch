@@ -276,3 +276,41 @@ func TestNextStepSkipUnblocked(t *testing.T) {
 		t.Errorf("clean skip should say so, got %q", got)
 	}
 }
+
+// A criterion with no polarity renders amber whatever it answers, so every
+// default criterion must say which answer is the good one.
+func TestDefaultsHavePolarity(t *testing.T) {
+	for name, rubric := range map[string]map[string]Question{"pr": Default(), "comment": DefaultComment()} {
+		for id, q := range rubric {
+			if q.Good == "" && len(q.GoodChoices) == 0 {
+				t.Errorf("%s rubric: %s has no polarity", name, id)
+			}
+		}
+	}
+}
+
+func TestCommentReport(t *testing.T) {
+	no := 0.1
+	resp := typesafe.Response{
+		Model: "jev-latest",
+		Answers: map[string]typesafe.Answer{
+			"inline_accurate": {Type: "noul", Noul: &no},
+		},
+	}
+	resp.Usage.InputTokens = 100
+
+	var buf bytes.Buffer
+	CommentReport(&buf, 3, DefaultComment(), &resp, 0.042)
+	out := buf.String()
+
+	for _, want := range []string{"3 lines from stdin", "inline_accurate", "100 in / 0 out tokens"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("comment report missing %q\n%s", want, out)
+		}
+	}
+	for _, unwanted := range []string{"approval blocked", "/code-review"} {
+		if strings.Contains(out, unwanted) {
+			t.Errorf("comment report has PR-only %q\n%s", unwanted, out)
+		}
+	}
+}

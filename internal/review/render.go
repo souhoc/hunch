@@ -1,4 +1,4 @@
-package main
+package review
 
 import (
 	"fmt"
@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/souhoc/hunch/v2/internal/github"
+	"github.com/souhoc/hunch/v2/internal/typesafe"
 )
 
 var (
@@ -34,8 +36,8 @@ const redAt = 0.33
 
 func fg(c lipgloss.TerminalColor) lipgloss.Style { return lipgloss.NewStyle().Foreground(c) }
 
-// report prints one block per criterion, verdict first.
-func report(w io.Writer, pr PR, docName string, questions map[string]Question, resp *response, pricePerMTok float64) {
+// Report prints one block per criterion, verdict first.
+func Report(w io.Writer, pr github.PR, docName string, questions map[string]Question, resp *typesafe.Response, pricePerMTok float64) {
 	meta := fmt.Sprintf("%d %s  +%d  -%d  onto %s",
 		pr.ChangedFiles, plural(pr.ChangedFiles, "file"), pr.Additions, pr.Deletions, pr.BaseRefName)
 	if docName != "" {
@@ -74,13 +76,13 @@ func report(w io.Writer, pr PR, docName string, questions map[string]Question, r
 // in a one-line, trivially-shaped diff, which is exactly when the model answers
 // "skip" — and the last line of the report is the one that gets read, so it must
 // not say "nothing to find" while the banner above says otherwise.
-func nextStep(pr PR, questions map[string]Question, answers map[string]Answer) string {
+func nextStep(pr github.PR, questions map[string]Question, answers map[string]typesafe.Answer) string {
 	a, ok := answers["code_review_effort"]
 	if !ok || a.Choice == "" {
 		return ""
 	}
 	level, blocked := a.Choice, blockers(questions, answers)
-	g := goodness(questions["code_review_effort"], a)
+	g := Goodness(questions["code_review_effort"], a)
 	if len(blocked) > 0 {
 		g = 0 // a blocked diff is not a clean bill, whatever the effort answer says
 	}
@@ -94,11 +96,11 @@ func nextStep(pr PR, questions map[string]Question, answers map[string]Answer) s
 	if len(blocked) > 0 {
 		return line + mutedStyle.Render("  "+strings.Join(blocked, ", ")+" blocks approval")
 	}
-	return line + mutedStyle.Render("  in "+pr.owner+"/"+pr.repo)
+	return line + mutedStyle.Render("  in "+pr.Owner+"/"+pr.Repo)
 }
 
 // orderedIDs sorts ids alphabetically but keeps "verdict" on top.
-func orderedIDs(answers map[string]Answer) []string {
+func orderedIDs(answers map[string]typesafe.Answer) []string {
 	ids := make([]string, 0, len(answers))
 	for id := range answers {
 		ids = append(ids, id)
@@ -117,10 +119,10 @@ func orderedIDs(answers map[string]Answer) []string {
 // approve bias, so a confident "yes, this removes a security control" has to beat
 // it rather than sit below it in the list. A rubric that marks nothing Blocks
 // gets no banner.
-func blockers(questions map[string]Question, answers map[string]Answer) []string {
+func blockers(questions map[string]Question, answers map[string]typesafe.Answer) []string {
 	var ids []string
 	for id, a := range answers {
-		if q := questions[id]; q.Blocks && goodness(q, a) <= redAt {
+		if q := questions[id]; q.Blocks && Goodness(q, a) <= redAt {
 			ids = append(ids, id)
 		}
 	}
@@ -128,7 +130,7 @@ func blockers(questions map[string]Question, answers map[string]Answer) []string
 	return ids
 }
 
-func renderAnswer(id string, q Question, a Answer) string {
+func renderAnswer(id string, q Question, a typesafe.Answer) string {
 	headline, body := "", ""
 
 	switch a.Type {
@@ -136,22 +138,22 @@ func renderAnswer(id string, q Question, a Answer) string {
 		if a.Noul == nil {
 			return idStyle.Render(id) + mutedStyle.Render("  (no answer)")
 		}
-		g := goodness(q, a)
+		g := Goodness(q, a)
 		headline = fg(colorOf(g)).Render(yesNo(*a.Noul)) +
 			mutedStyle.Render(fmt.Sprintf("  (%.0f%% yes)", *a.Noul*100))
 		body = rowStyle.Render(bar(*a.Noul, colorOf(g)))
 
 	case "choice":
-		headline = fg(colorOf(goodness(q, a))).Bold(true).Render(a.Choice) +
+		headline = fg(colorOf(Goodness(q, a))).Bold(true).Render(a.Choice) +
 			confidence(a.Confidence)
-		body = distribution(a.Probabilities, nil, a.Choice, goodness(q, a))
+		body = distribution(a.Probabilities, nil, a.Choice, Goodness(q, a))
 
 	case "score":
 		if a.Score == nil {
 			return idStyle.Render(id) + mutedStyle.Render("  (no answer)")
 		}
 		top := float64(len(a.Legend) - 1)
-		g := goodness(q, a)
+		g := Goodness(q, a)
 		label := short(a.Legend[likeliest(a.Probabilities)])
 		headline = fg(colorOf(g)).Bold(true).Render(label) +
 			mutedStyle.Render(fmt.Sprintf("  %.1f/%.0f", *a.Score, top)) + confidence(a.Confidence)
@@ -206,9 +208,9 @@ func bar(ratio float64, colour lipgloss.TerminalColor) string {
 		trackStyle.Render(strings.Repeat("░", barWidth-filled))
 }
 
-// goodness maps an answer onto 0 (bad) .. 1 (good) using the question's Good field.
+// Goodness maps an answer onto 0 (bad) .. 1 (good) using the question's Good field.
 // Questions with no Good field come back neutral.
-func goodness(q Question, a Answer) float64 {
+func Goodness(q Question, a typesafe.Answer) float64 {
 	switch {
 	case a.Type == "noul" && a.Noul != nil && q.Good == GoodYes:
 		return *a.Noul

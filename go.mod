@@ -2,7 +2,10 @@ module github.com/souhoc/hunch/v2
 
 go 1.27
 
-require github.com/charmbracelet/lipgloss v1.1.0
+require (
+	github.com/alecthomas/kong v1.16.1
+	github.com/charmbracelet/lipgloss v1.1.0
+)
 
 require (
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect

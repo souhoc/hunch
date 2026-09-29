@@ -1,4 +1,4 @@
-package main
+package typesafe
 
 import (
 	"encoding/json"
@@ -11,16 +11,31 @@ import (
 	"time"
 )
 
-func testClient() *client {
-	return &client{
-		apiKey: "test-key", model: "jev-latest",
-		http: &http.Client{}, retries: 3, backoff: time.Millisecond,
-		logf: func(string, ...any) {},
+// sample is a response in the shape the API docs describe, one answer per type.
+const sample = `{
+  "model": "jev-latest",
+  "answers": {
+    "description_matches_diff": {"type": "noul", "noul": 0.12},
+    "verdict": {
+      "type": "choice",
+      "choice": "request_changes",
+      "probabilities": {"approve": 0.08, "comment": 0.2, "request_changes": 0.72},
+      "confidence": 0.7
+    }
+  },
+  "usage": {"input_tokens": 312, "output_tokens": 48}
+}`
+
+func testClient() *Client {
+	return &Client{
+		APIKey: "test-key", Model: "jev-latest",
+		HTTP: &http.Client{}, Retries: 3, Backoff: time.Millisecond,
+		Logf: func(string, ...any) {},
 	}
 }
 
 // serve stands in for the API and records what it was sent.
-func serve(t *testing.T, handler http.HandlerFunc) (*client, func() []byte) {
+func serve(t *testing.T, handler http.HandlerFunc) (*Client, func() []byte) {
 	t.Helper()
 	var lastBody []byte
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -30,7 +45,7 @@ func serve(t *testing.T, handler http.HandlerFunc) (*client, func() []byte) {
 	t.Cleanup(srv.Close)
 
 	c := testClient()
-	c.endpoint = srv.URL
+	c.Endpoint = srv.URL
 	return c, func() []byte { return lastBody }
 }
 
@@ -41,7 +56,7 @@ func TestEvaluateSendsAuthAndBody(t *testing.T) {
 		fmt.Fprint(w, sample)
 	})
 
-	resp, err := c.evaluate(State{Diff: "some diff"}, defaultQuestions())
+	resp, err := c.Evaluate(map[string]string{"diff": "some diff"}, map[string]Question{"q": {Type: "noul", Instructions: "ok?"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +94,7 @@ func TestEvaluateRetriesThenSucceeds(t *testing.T) {
 				}
 				fmt.Fprint(w, sample)
 			})
-			if _, err := c.evaluate(State{}, nil); err != nil {
+			if _, err := c.Evaluate(nil, nil); err != nil {
 				t.Fatal(err)
 			}
 			if calls != 3 {
@@ -97,7 +112,7 @@ func TestEvaluateDoesNotRetryClientError(t *testing.T) {
 		fmt.Fprint(w, `{"error":"malformed question"}`)
 	})
 
-	_, err := c.evaluate(State{}, nil)
+	_, err := c.Evaluate(nil, nil)
 	if err == nil {
 		t.Fatal("want an error")
 	}
@@ -113,8 +128,8 @@ func TestEvaluateGivesUp(t *testing.T) {
 	c, _ := serve(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(529)
 	})
-	c.retries = 2
-	if _, err := c.evaluate(State{}, nil); err == nil || !strings.Contains(err.Error(), "gave up after 2") {
+	c.Retries = 2
+	if _, err := c.Evaluate(nil, nil); err == nil || !strings.Contains(err.Error(), "gave up after 2") {
 		t.Errorf("got %v", err)
 	}
 }
@@ -123,7 +138,7 @@ func TestEvaluateRejectsGarbageJSON(t *testing.T) {
 	c, _ := serve(t, func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, "not json")
 	})
-	if _, err := c.evaluate(State{}, nil); err == nil || !strings.Contains(err.Error(), "decode response") {
+	if _, err := c.Evaluate(nil, nil); err == nil || !strings.Contains(err.Error(), "decode response") {
 		t.Errorf("got %v", err)
 	}
 }

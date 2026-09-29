@@ -1,12 +1,17 @@
-package main
+package eval
 
 import (
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/souhoc/hunch/v2/internal/github"
+	"github.com/souhoc/hunch/v2/internal/review"
+	"github.com/souhoc/hunch/v2/internal/typesafe"
 )
 
 func TestAUC(t *testing.T) {
@@ -45,16 +50,16 @@ func TestAnswered(t *testing.T) {
 	n, s := 0.5, 1.0
 	cases := []struct {
 		name string
-		a    Answer
+		a    typesafe.Answer
 		want bool
 	}{
-		{"noul with value", Answer{Type: "noul", Noul: &n}, true},
-		{"noul nil", Answer{Type: "noul"}, false},
-		{"score with value", Answer{Type: "score", Score: &s}, true},
-		{"score nil", Answer{Type: "score"}, false},
-		{"choice set", Answer{Type: "choice", Choice: "approve"}, true},
-		{"choice empty", Answer{Type: "choice"}, false},
-		{"unknown type", Answer{Type: "mystery"}, false},
+		{"noul with value", typesafe.Answer{Type: "noul", Noul: &n}, true},
+		{"noul nil", typesafe.Answer{Type: "noul"}, false},
+		{"score with value", typesafe.Answer{Type: "score", Score: &s}, true},
+		{"score nil", typesafe.Answer{Type: "score"}, false},
+		{"choice set", typesafe.Answer{Type: "choice", Choice: "approve"}, true},
+		{"choice empty", typesafe.Answer{Type: "choice"}, false},
+		{"unknown type", typesafe.Answer{Type: "mystery"}, false},
 	}
 	for _, c := range cases {
 		if got := answered(c.a); got != c.want {
@@ -77,7 +82,7 @@ func TestLoadCorpus(t *testing.T) {
 		{"url": "https://github.com/o/r/pull/1", "review_decision": "approved", "reason": "fine"},
 		{"url": "https://github.com/o/r/pull/2", "review_decision": "changes_requested", "reason": "nope"}
 	]`)
-	entries, err := loadCorpus(valid)
+	entries, err := LoadCorpus(valid)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,20 +90,20 @@ func TestLoadCorpus(t *testing.T) {
 		t.Errorf("bad parse: %+v", entries)
 	}
 
-	if _, err := loadCorpus(filepath.Join(dir, "missing.json")); err == nil {
+	if _, err := LoadCorpus(filepath.Join(dir, "missing.json")); err == nil {
 		t.Error("want error on missing file")
 	}
-	if _, err := loadCorpus(write("malformed.json", `not json`)); err == nil {
+	if _, err := LoadCorpus(write("malformed.json", `not json`)); err == nil {
 		t.Error("want error on malformed JSON")
 	}
-	if _, err := loadCorpus(write("empty.json", `[]`)); err == nil {
+	if _, err := LoadCorpus(write("empty.json", `[]`)); err == nil {
 		t.Error("want error on empty corpus")
 	}
-	if _, err := loadCorpus(write("nourl.json", `[{"review_decision": "approved"}]`)); err == nil {
+	if _, err := LoadCorpus(write("nourl.json", `[{"review_decision": "approved"}]`)); err == nil {
 		t.Error("want error on missing url")
 	}
 
-	_, err = loadCorpus(write("bad.json", `[{"url": "https://github.com/o/r/pull/1", "review_decision": "maybe"}]`))
+	_, err = LoadCorpus(write("bad.json", `[{"url": "https://github.com/o/r/pull/1", "review_decision": "maybe"}]`))
 	if err == nil || !strings.Contains(err.Error(), "maybe") {
 		t.Errorf("got %v, want an error naming the bad value", err)
 	}
@@ -116,7 +121,7 @@ func TestRunEvalAndAUCTable(t *testing.T) {
 	esac`)
 
 	calls := 0
-	c, _ := serve(t, func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
 		score := 0.0 // Safe: goodness 1.0 for correctness_risk (Good: low)
 		if calls == 3 {
@@ -126,7 +131,9 @@ func TestRunEvalAndAUCTable(t *testing.T) {
 			"type":"score","score":%v,
 			"legend":{"0":"Safe","1":"Low","2":"Moderate","3":"High"}
 		}}}`, score)
-	})
+	}))
+	t.Cleanup(srv.Close)
+	c := &typesafe.Client{Endpoint: srv.URL, HTTP: srv.Client(), Logf: func(string, ...any) {}}
 
 	corpus := []CorpusEntry{
 		{URL: "https://github.com/o/r/pull/1", ReviewDecision: "approved"},
@@ -134,10 +141,10 @@ func TestRunEvalAndAUCTable(t *testing.T) {
 		{URL: "https://github.com/o/r/pull/3", ReviewDecision: "changes_requested"},
 		{URL: "https://github.com/o/r/pull/4", ReviewDecision: "changes_requested"}, // fails at gh
 	}
-	o := &options{maxDiff: 1000, maxDoc: 1000, docNames: "CLAUDE.md,README.md"}
+	o := github.Options{Docs: []string{"CLAUDE.md", "README.md"}, MaxDiff: 1000, MaxDoc: 1000}
 	logf := func(string, ...any) {}
 
-	results := runEval(c, defaultQuestions(), corpus, o, logf)
+	results := Run(c, review.Default(), corpus, o, logf)
 	if len(results) != 4 {
 		t.Fatalf("got %d results, want 4", len(results))
 	}
@@ -147,12 +154,12 @@ func TestRunEvalAndAUCTable(t *testing.T) {
 			t.Errorf("%s: Err = %q, want error=%v", r.URL, r.Err, wantErr)
 		}
 	}
-	if !anySucceeded(results) {
+	if !AnySucceeded(results) {
 		t.Fatal("want at least one success")
 	}
 
-	table := aucTable(results, defaultQuestions())
-	var row *criterionAUC
+	table := AUCTable(results, review.Default())
+	var row *CriterionAUC
 	for i := range table {
 		if table[i].ID == "correctness_risk" {
 			row = &table[i]
@@ -165,7 +172,7 @@ func TestRunEvalAndAUCTable(t *testing.T) {
 
 func TestPrintAUCTable(t *testing.T) {
 	var buf strings.Builder
-	printAUCTable(&buf, []criterionAUC{
+	PrintAUCTable(&buf, []CriterionAUC{
 		{ID: "verdict", AUC: 0.64, N: 50, Valid: true},
 		{ID: "test_coverage", N: 3, Valid: false},
 	})
@@ -176,4 +183,15 @@ func TestPrintAUCTable(t *testing.T) {
 	if !strings.Contains(out, "insufficient data") {
 		t.Errorf("missing invalid-row marker: %s", out)
 	}
+}
+
+// fakeGH puts a stub `gh` on PATH for the duration of the test.
+func fakeGH(t *testing.T, script string) {
+	t.Helper()
+	dir := t.TempDir()
+	body := "#!/bin/sh\n" + script + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "gh"), []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }

@@ -1,4 +1,6 @@
-package main
+// Package typesafe is a client for the TypeSafe evaluation endpoint. See
+// typesafe.md at the repo root for the request and answer shapes.
+package typesafe
 
 import (
 	"bytes"
@@ -13,7 +15,15 @@ const defaultEndpoint = "https://api.typesafe.ai/v1/systemone"
 
 // TypeSafe charges for input tokens only; output tokens are free.
 // https://docs.typesafe.ai/models — override with -price when the rate moves.
-const defaultPricePerMTok = 0.042
+const DefaultPricePerMTok = 0.042
+
+// Question is one typed question, exactly as the API accepts it.
+// Criteria is: object (noul), map[string]string (choice), []string (score).
+type Question struct {
+	Type         string `json:"type"`
+	Instructions string `json:"instructions"`
+	Criteria     any    `json:"criteria,omitempty"`
+}
 
 type request struct {
 	State     any                 `json:"state"`
@@ -32,7 +42,8 @@ type Answer struct {
 	Confidence    *float64           `json:"confidence,omitempty"`
 }
 
-type response struct {
+// Response is the API reply: one Answer per question id.
+type Response struct {
 	Model   string            `json:"model"`
 	Answers map[string]Answer `json:"answers"`
 	Usage   struct {
@@ -41,30 +52,31 @@ type response struct {
 	} `json:"usage"`
 }
 
-type client struct {
-	apiKey   string
-	model    string
-	endpoint string // empty means defaultEndpoint; tests point it at httptest
-	http     *http.Client
-	retries  int
-	backoff  time.Duration // first retry delay, doubling after each attempt
-	logf     func(format string, a ...any)
+type Client struct {
+	APIKey   string
+	Model    string
+	Endpoint string // empty means defaultEndpoint; tests point it at httptest
+	HTTP     *http.Client
+	Retries  int
+	Backoff  time.Duration // first retry delay, doubling after each attempt
+	Logf     func(format string, a ...any)
 }
 
-func (c *client) evaluate(state any, questions map[string]Question) (*response, error) {
-	body, err := json.Marshal(request{State: state, Model: c.model, Questions: questions})
+// Evaluate asks every question about state, retrying 429/529 with backoff.
+func (c *Client) Evaluate(state any, questions map[string]Question) (*Response, error) {
+	body, err := json.Marshal(request{State: state, Model: c.Model, Questions: questions})
 	if err != nil {
 		return nil, fmt.Errorf("encode request: %w", err)
 	}
 
-	backoff := c.backoff
+	backoff := c.Backoff
 	if backoff <= 0 {
 		backoff = time.Second
 	}
 	var lastErr error
-	for attempt := 0; attempt <= c.retries; attempt++ {
+	for attempt := 0; attempt <= c.Retries; attempt++ {
 		if attempt > 0 {
-			c.logf("retry %d/%d in %s (%v)", attempt, c.retries, backoff, lastErr)
+			c.Logf("retry %d/%d in %s (%v)", attempt, c.Retries, backoff, lastErr)
 			time.Sleep(backoff)
 			backoff *= 2
 		}
@@ -78,11 +90,11 @@ func (c *client) evaluate(state any, questions map[string]Question) (*response, 
 			return nil, err
 		}
 	}
-	return nil, fmt.Errorf("gave up after %d retries: %w", c.retries, lastErr)
+	return nil, fmt.Errorf("gave up after %d retries: %w", c.Retries, lastErr)
 }
 
-func (c *client) post(body []byte) (*response, bool, error) {
-	url := c.endpoint
+func (c *Client) post(body []byte) (*Response, bool, error) {
+	url := c.Endpoint
 	if url == "" {
 		url = defaultEndpoint
 	}
@@ -90,10 +102,10 @@ func (c *client) post(body []byte) (*response, bool, error) {
 	if err != nil {
 		return nil, false, err
 	}
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	req.Header.Set("Authorization", "Bearer "+c.APIKey)
 	req.Header.Set("Content-Type", "application/json")
 
-	httpResp, err := c.http.Do(req)
+	httpResp, err := c.HTTP.Do(req)
 	if err != nil {
 		return nil, true, err // network hiccup, worth a retry
 	}
@@ -106,12 +118,20 @@ func (c *client) post(body []byte) (*response, bool, error) {
 
 	if httpResp.StatusCode != http.StatusOK {
 		retryable := httpResp.StatusCode == http.StatusTooManyRequests || httpResp.StatusCode == 529
-		return nil, retryable, fmt.Errorf("typesafe %s: %s", httpResp.Status, truncate(string(raw), 500))
+		return nil, retryable, fmt.Errorf("typesafe %s: %s", httpResp.Status, cut(string(raw), 500))
 	}
 
-	var out response
+	var out Response
 	if err := json.Unmarshal(raw, &out); err != nil {
 		return nil, false, fmt.Errorf("decode response: %w", err)
 	}
 	return &out, false, nil
+}
+
+// cut keeps an error body readable when the server returns a page of HTML.
+func cut(s string, maxBytes int) string {
+	if len(s) <= maxBytes {
+		return s
+	}
+	return s[:maxBytes] + "..."
 }

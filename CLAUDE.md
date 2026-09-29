@@ -18,7 +18,7 @@ answer shapes. It is the source of truth for the three question/answer types
 task                             # lint, test, build
 task cover                       # coverage gate, fails under MIN_COVERAGE
 task cover MIN_COVERAGE=80       # try a stricter gate without editing anything
-go test -run TestGoodness -v     # one test
+go test ./internal/review -run TestGoodness -v   # one test
 ```
 
 CI (`.github/workflows/ci.yml`) runs exactly these plus `-race`, and installs
@@ -29,8 +29,8 @@ the workflow when coverage climbs.
 Iterate without spending API tokens:
 
 ```sh
-./hunch -dump-state <pr-url>   # exact payload, no API call
-./hunch -dump-questions        # the rubric as JSON
+./hunch --dump-state <pr-url>   # exact payload, no API call
+./hunch --dump-questions        # the rubric as JSON
 ```
 
 Requires `gh` installed and authenticated. The API key comes from
@@ -38,41 +38,46 @@ Requires `gh` installed and authenticated. The API key comes from
 
 ## Flow
 
-`main.go` orchestrates; each stage lives in its own file.
+`main.go` is the [kong](https://github.com/alecthomas/kong) CLI: the `cli`
+struct holds the shared flags, one `*Cmd` struct per subcommand (`review` is the
+default, so `hunch <url>` works). Each stage lives in its own `internal/` package:
 
-1. `gather.go` — shells out to `gh` three times: `pr view --json` (body, title,
-   counts), `pr diff`, and `api .../contents/<doc>?ref=<headSHA>` for `CLAUDE.md`
-   then `README.md`. All three become one `State` struct.
-2. `typesafe.go` — POSTs the state, retries 429/529 with exponential backoff,
-   decodes every answer shape into one flat `Answer` struct.
-3. `criteria.go` — the rubric (`defaultQuestions()`), overridable with `-questions`.
-4. `render.go` — lipgloss report; plain text automatically when piped.
+1. `internal/github` — shells out to `gh` three times: `pr view --json` (body,
+   title, counts), `pr diff`, and `api .../contents/<doc>?ref=<headSHA>` for
+   `CLAUDE.md` then `README.md`. `Gather` turns all three into one `State`.
+2. `internal/typesafe` — POSTs the state, retries 429/529 with exponential
+   backoff, decodes every answer shape into one flat `Answer` struct.
+3. `internal/review` — the rubric (`criteria.go`, `Default()`, overridable with
+   `--questions`) and the lipgloss report (`render.go`, plain text when piped).
+4. `internal/eval` — `hunch eval`: runs the rubric over a corpus, scores AUC.
 
 ## Invariants that are easy to break
 
-- **`apiQuestions()` must strip `Good` and `GoodChoices` before the POST.**
-  Those two fields are ours, not TypeSafe's — they drive the report colours only.
-  `TestAPIQuestionsStripsDisplayFields` guards this; sending unknown fields risks
-  a 422.
+- **`review.Question` is ours, `typesafe.Question` is the API's.** `Good`,
+  `GoodChoices` and `Blocks` drive the report only; `review.APIQuestions()`
+  converts to the API type, so they cannot reach the POST. Keep the API type free
+  of display fields — sending unknown fields risks a 422.
+  `TestAPIQuestionsStripsDisplayFields` still guards it.
 - **`gh()` sets `CLICOLOR_FORCE=0` and `NO_COLOR=1` on the subprocess.** With
   colour forced in the ambient environment, `gh --json` emits ANSI codes and the
   JSON parse fails.
 - **An empty diff is a hard error, not an empty review.** Gerrit-mirrored repos
   (golang/go) serve pull requests with zero files; the model then returns a
   confident verdict about nothing.
-- **Colour needs polarity.** `goodness()` maps an answer to 0 (bad) .. 1 (good)
+- **Colour needs polarity.** `Goodness()` maps an answer to 0 (bad) .. 1 (good)
   using the question's `Good` (`yes`/`no` for noul, `low`/`high` for score) or
   `GoodChoices` (option → 0..1). Without it a criterion renders amber. A new
   criterion with no polarity is silently uninformative rather than wrong — but
   `leaks_secrets: 92% yes` painted green would be a lie, so set it.
-- **`nextStep()` in `render.go` special-cases one criterion id**, `code_review_effort`,
-  to print the `/code-review <level> <number>` command. A rubric without that id
+- **`nextStep()` in `internal/review/render.go` special-cases one criterion
+  id**, `code_review_effort`, to print the `/code-review <level> <number>` command. A rubric without that id
   prints nothing. This is the only id the renderer knows by name — keep it that way
   rather than growing a generic hook for one instance.
-- **Completions are generated from the `*flag.FlagSet`, never a hand-kept list.**
-  `registerFlags` exists so the flags are introspectable outside `main` — `go test`
-  registers its own flags on `flag.CommandLine`, so tests build their own set.
-  The `completions` subcommand must stay absent from its own output.
+- **Completions are generated from the kong model, never a hand-kept list.**
+  `cliFlags` walks the root flags plus the default `review` command's; a flag
+  offers files when tagged `type:"existingfile"`. Tests build the model with
+  `newParser(&cli{})`, never from `os.Args`. Subcommands, `completions` above all,
+  stay absent from the output.
 - **`Blocks` overrides the verdict, and the renderer never names the ids.** A
   criterion marked `Blocks: true` whose answer is red prints a banner above
   everything, because `verdict` is the weakest scored criterion and approve-biased
@@ -81,6 +86,8 @@ Requires `gh` installed and authenticated. The API key comes from
   paint a criterion green and block on it at the same time. `TestBlockAtRedBoundary`
   guards that. Adding a blocker is a data change in `criteria.go`, never a change
   to `render.go`.
+- **Flags are double-dash.** kong parses GNU-style `--max-diff`, only `-v` and
+  `-h` have short forms. The old single-dash `-max-diff` spelling is gone.
 - **Score headlines name the modal level** (`likeliest(probabilities)`), not the
   rounded weighted score, so the headline and the bars below it agree.
 

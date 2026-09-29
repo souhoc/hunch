@@ -1,4 +1,6 @@
-package main
+// Package github gathers a pull request, its diff and its project doc through
+// the gh CLI.
+package github
 
 import (
 	"bytes"
@@ -21,9 +23,9 @@ type PR struct {
 	Deletions    int    `json:"deletions"`
 	ChangedFiles int    `json:"changed_files"`
 
-	headSHA string
-	owner   string
-	repo    string
+	HeadSHA string `json:"-"`
+	Owner   string `json:"-"`
+	Repo    string `json:"-"`
 }
 
 // State is what we send to TypeSafe as the thing to evaluate.
@@ -31,6 +33,38 @@ type State struct {
 	PR         PR     `json:"pull_request"`
 	Guidelines string `json:"project_guidelines,omitempty"`
 	Diff       string `json:"diff"`
+
+	DocName string `json:"-"` // which doc Guidelines came from, empty if none
+}
+
+// Options bounds what Gather fetches.
+type Options struct {
+	Docs    []string // project docs to look for, first match wins
+	MaxDiff int      // bytes; 0 means no limit
+	MaxDoc  int      // bytes; 0 means no limit
+}
+
+// Gather fetches everything the model is shown about one pull request.
+func Gather(url string, o Options, logf func(format string, a ...any)) (State, error) {
+	logf("fetching pull request")
+	pr, err := fetchPR(url)
+	if err != nil {
+		return State{}, err
+	}
+
+	logf("fetching diff")
+	diff, err := fetchDiff(url, o.MaxDiff)
+	if err != nil {
+		return State{}, err
+	}
+
+	docName, guidelines := fetchGuidelines(pr, o.Docs, o.MaxDoc)
+	if docName == "" {
+		logf("no project doc found (%s)", strings.Join(o.Docs, ","))
+	} else {
+		logf("using %s as project guidelines", docName)
+	}
+	return State{PR: pr, Guidelines: guidelines, Diff: diff, DocName: docName}, nil
 }
 
 var prURLRe = regexp.MustCompile(`^(?:https?://)?github\.com/([^/]+)/([^/]+)/pull/(\d+)`)
@@ -94,7 +128,7 @@ func fetchPR(url string) (PR, error) {
 		URL: url, Number: v.Number, Title: v.Title, Body: body,
 		BaseRefName: v.BaseRefName, Additions: v.Additions,
 		Deletions: v.Deletions, ChangedFiles: v.ChangedFiles,
-		headSHA: v.HeadRefOid, owner: owner, repo: repo,
+		HeadSHA: v.HeadRefOid, Owner: owner, Repo: repo,
 	}, nil
 }
 
@@ -118,7 +152,7 @@ func fetchGuidelines(pr PR, names []string, maxBytes int) (string, string) {
 		if name == "" {
 			continue
 		}
-		path := fmt.Sprintf("repos/%s/%s/contents/%s?ref=%s", pr.owner, pr.repo, name, pr.headSHA)
+		path := fmt.Sprintf("repos/%s/%s/contents/%s?ref=%s", pr.Owner, pr.Repo, name, pr.HeadSHA)
 		out, err := gh("api", "-H", "Accept: application/vnd.github.raw", path)
 		if err != nil || strings.TrimSpace(out) == "" {
 			continue

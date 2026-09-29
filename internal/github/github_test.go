@@ -1,4 +1,4 @@
-package main
+package github
 
 import (
 	"os"
@@ -33,8 +33,8 @@ func TestFetchPR(t *testing.T) {
 	if pr.Body != "a body" {
 		t.Errorf("body should be trimmed, got %q", pr.Body)
 	}
-	if pr.owner != "owner" || pr.repo != "repo" || pr.headSHA != "abc123" {
-		t.Errorf("owner/repo/sha = %q/%q/%q", pr.owner, pr.repo, pr.headSHA)
+	if pr.Owner != "owner" || pr.Repo != "repo" || pr.HeadSHA != "abc123" {
+		t.Errorf("owner/repo/sha = %q/%q/%q", pr.Owner, pr.Repo, pr.HeadSHA)
 	}
 }
 
@@ -74,7 +74,7 @@ func TestFetchGuidelinesFallsBackToReadme(t *testing.T) {
 	// CLAUDE.md is missing, README.md is served.
 	fakeGH(t, `case "$*" in *CLAUDE.md*) exit 1;; *README.md*) echo "# readme";; esac`)
 
-	pr := PR{owner: "o", repo: "r", headSHA: "sha"}
+	pr := PR{Owner: "o", Repo: "r", HeadSHA: "sha"}
 	name, doc := fetchGuidelines(pr, []string{"CLAUDE.md", " README.md "}, 1000)
 	if name != "README.md" {
 		t.Errorf("name = %q, want README.md (and whitespace trimmed)", name)
@@ -86,7 +86,7 @@ func TestFetchGuidelinesFallsBackToReadme(t *testing.T) {
 
 func TestFetchGuidelinesNoneFound(t *testing.T) {
 	fakeGH(t, `exit 1`)
-	name, doc := fetchGuidelines(PR{owner: "o", repo: "r"}, []string{"CLAUDE.md"}, 1000)
+	name, doc := fetchGuidelines(PR{Owner: "o", Repo: "r"}, []string{"CLAUDE.md"}, 1000)
 	if name != "" || doc != "" {
 		t.Errorf("want empty, got %q / %q", name, doc)
 	}
@@ -112,5 +112,45 @@ func TestGHReportsStderr(t *testing.T) {
 	if _, err := gh("pr", "view"); err == nil ||
 		!strings.Contains(err.Error(), "could not resolve") {
 		t.Errorf("got %v, want the stderr quoted", err)
+	}
+}
+
+func TestParsePRURL(t *testing.T) {
+	owner, repo, err := parsePRURL("https://github.com/cli/cli/pull/9000")
+	if err != nil || owner != "cli" || repo != "cli" {
+		t.Fatalf("got %q %q %v", owner, repo, err)
+	}
+	if _, _, err := parsePRURL("https://github.com/cli/cli/issues/1"); err == nil {
+		t.Error("issue link should be rejected")
+	}
+}
+
+func TestTruncate(t *testing.T) {
+	if got := truncate("short", 100); got != "short" {
+		t.Errorf("got %q", got)
+	}
+	if got := truncate("short", 0); got != "short" {
+		t.Errorf("zero max means no limit, got %q", got)
+	}
+	got := truncate("abcdefghij", 4)
+	if !strings.HasPrefix(got, "abcd") || !strings.Contains(got, "original was 10 bytes") {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestGather(t *testing.T) {
+	fakeGH(t, `case "$*" in
+	*"pr view"*) echo '`+prViewJSON+`' ;;
+	*"pr diff"*) echo "diff --git a/x b/x" ;;
+	*README.md*) echo "# readme" ;;
+	*) exit 1 ;;
+	esac`)
+
+	s, err := Gather("https://github.com/o/r/pull/42", Options{Docs: []string{"CLAUDE.md", "README.md"}}, func(string, ...any) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.PR.Number != 42 || !strings.Contains(s.Diff, "diff --git") || s.DocName != "README.md" {
+		t.Errorf("bad state: %+v", s)
 	}
 }

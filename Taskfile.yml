@@ -17,7 +17,7 @@ tasks:
     cmds:
       - go build -o {{.BINARY}} .
     sources:
-      - '*.go'
+      - '**/*.go'
       - go.sum
     generates:
       - '{{.BINARY}}'

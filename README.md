@@ -13,7 +13,7 @@ The `state` is one JSON object:
 - `project_guidelines` — `CLAUDE.md` if the repo has one, else `README.md`, read at the PR head
 - `diff` — output of `gh pr diff`
 
-Diff and doc are truncated (`-max-diff`, `-max-doc`) so a huge PR does not blow up the request.
+Diff and doc are truncated (`--max-diff`, `--max-doc`) so a huge PR does not blow up the request.
 
 ## Install
 
@@ -33,10 +33,11 @@ Needs `gh` installed and logged in.
 
 ```sh
 hunch https://github.com/owner/repo/pull/123
-hunch -v -json https://github.com/owner/repo/pull/123
-hunch -dump-state https://github.com/owner/repo/pull/123   # see the payload, no API call
-hunch -dump-questions > my-rubric.json                     # start from the defaults
-hunch -questions my-rubric.json https://github.com/owner/repo/pull/123
+hunch -v --json https://github.com/owner/repo/pull/123
+hunch --dump-state https://github.com/owner/repo/pull/123   # see the payload, no API call
+hunch --dump-questions > my-rubric.json                     # start from the defaults
+hunch --questions my-rubric.json https://github.com/owner/repo/pull/123
+hunch eval eval/corpus.json                                 # AUC of each criterion vs human reviews
 hunch version
 ```
 
@@ -83,7 +84,7 @@ CI runs the same checks on every push and pull request.
 | `diff_dilution` | score | 0 concentrated → 3 several changes in one PR |
 | `comment_noise` | score | 0 comments earn their place → 3 verbose or narrating |
 
-They live in `criteria.go`. Edit there for a permanent change, or use `-questions` for a one-off.
+They live in `internal/review/criteria.go`. Edit there for a permanent change, or use `--questions` for a one-off.
 
 `follows_project_conventions` and `test_coverage` used to be here and were dropped:
 measured against human review decisions they scored 0.46 and 0.20 AUC, where 0.5 is
@@ -127,23 +128,27 @@ the line disappears.
 
 ## Flags
 
+`hunch --help` is the source of truth. The main ones:
+
 ```
--model string      TypeSafe model (default "jev-latest")
--questions file    JSON file overriding the default criteria
--docs list         docs to look for, first match wins (default "CLAUDE.md,README.md")
--max-diff n        truncate the diff to n bytes (default 150000)
--max-doc n         truncate the project doc to n bytes (default 30000)
--retries n         retries on 429/529 with exponential backoff (default 3)
--dump-questions    print the default criteria as JSON and exit
--dump-state        print the state that would be sent and exit
--json              print the raw API response
--v                 log progress to stderr
+--model string      TypeSafe model (default "jev-latest")
+--questions file    JSON file overriding the default criteria
+--docs list         docs to look for, first match wins (default "CLAUDE.md,README.md")
+--max-diff n        truncate the diff to n bytes (default 10000)
+--max-doc n         truncate the project doc to n bytes (default 30000)
+--retries n         retries on 429/529 with exponential backoff (default 3)
+--price usd         USD per million input tokens, for the cost line
+--dump-questions    print the criteria as JSON and exit
+--dump-state        print the state that would be sent and exit
+--json              print the raw API response
+-v, --verbose       log progress to stderr
 ```
 
 ## Files
 
-- `main.go` — flags and orchestration
-- `gather.go` — `gh` calls, state building
-- `typesafe.go` — API client, retry, answer types
-- `criteria.go` — the rubric
-- `render.go` — lipgloss report
+- `main.go` — kong CLI, one struct per subcommand
+- `completions.go` — shell scripts generated from the kong model
+- `internal/github` — `gh` calls, state building
+- `internal/typesafe` — API client, retry, answer types
+- `internal/review` — the rubric and the lipgloss report
+- `internal/eval` — corpus loading and AUC scoring

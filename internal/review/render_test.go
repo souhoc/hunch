@@ -290,11 +290,11 @@ func TestDefaultsHavePolarity(t *testing.T) {
 }
 
 func TestCommentReport(t *testing.T) {
-	no := 0.1
+	yes := 0.9
 	resp := typesafe.Response{
 		Model: "jev-latest",
 		Answers: map[string]typesafe.Answer{
-			"inline_accurate": {Type: "noul", Noul: &no},
+			"inline_accurate": {Type: "noul", Noul: &yes},
 		},
 	}
 	resp.Usage.InputTokens = 100

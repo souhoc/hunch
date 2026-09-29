@@ -113,7 +113,7 @@ comment) and inside (the body):
 | `doc_accurate` | noul | the doc comment matches what the code does |
 | `inline_why` | score | 0 every non-obvious line explained → 3 subtle code left bare |
 | `inline_noise` | score | 0 every comment earns its place → 3 commented-out code, notes to a reviewer |
-| `inline_accurate` | noul | an inline comment contradicts its code |
+| `inline_accurate` | noul | every inline comment agrees with its code |
 | `comment_length` | score | 0 tight → 3 comments longer than the code |
 
 `hunch comment --dump-questions` prints them; `--questions` overrides them the

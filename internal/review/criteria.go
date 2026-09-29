@@ -236,12 +236,12 @@ func DefaultComment() map[string]Question {
 		},
 		"inline_accurate": {
 			Type:         "noul",
-			Instructions: "Does any inline comment contradict the code next to it?",
+			Instructions: "Does every inline comment agree with the code next to it? Answer true if there are no inline comments.",
 			Criteria: map[string]string{
-				"true":  "At least one comment describes behaviour the adjacent code does not have",
-				"false": "Every inline comment agrees with its code, or there are none",
+				"true":  "Every inline comment agrees with its code, or there are none",
+				"false": "At least one comment describes behaviour the adjacent code does not have",
 			},
-			Good: GoodNo,
+			Good: GoodYes,
 		},
 		"comment_length": {
 			Type: "score",

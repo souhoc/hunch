@@ -186,21 +186,31 @@ why an empty diff is an error, no inline comments):
 
 ```
                   noisy                clean
-comment_length    Padded 77%           Tight 67%
-doc_contract      Echo 91%             Partial 55%
+comment_length    Padded 76%           Tight 65%
+doc_contract      Echo 93%             Partial 53%
 inline_noise      Heavy 93%            Clean 82%
-inline_accurate   65% yes (unclear)    13% yes
-doc_accurate      34% yes (unclear)    60% yes (unclear)
-inline_why        Gaps 26% conf.       Mostly 24% conf.
+inline_accurate   26% yes (no)         82% yes
+doc_accurate      32% yes (no)         54% yes (unclear)
+inline_why        Gaps 21% conf.       Mostly 42% conf.
 ```
 
 `comment_length`, `doc_contract` and `inline_noise` separated the two cleanly.
-`inline_accurate` leaned the right way — the noisy sample's `// returns the
-first maxBytes bytes` is wrong, the function also appends a marker.
-`doc_accurate` was unclear on both, and `inline_why` answered at ~25%
-confidence on both, which is the model saying it does not know. Treat those two
-as unproven until a spot-check on a wider set of shapes (stale doc, subtle
-algorithm, workaround) says otherwise.
+`inline_accurate` did too — the noisy sample's `// returns the first maxBytes
+bytes` is wrong, the function also appends a marker. `doc_accurate` sat near
+the red/amber line on the noisy sample and was unclear on the clean one, and
+`inline_why` answered at low confidence on both, which is the model saying it
+does not know. Treat those two as unproven until a spot-check on a wider set of
+shapes (stale doc, subtle algorithm, workaround) says otherwise.
+
+**Name the criterion the way its `true` reads.** `inline_accurate` first asked
+"does any inline comment contradict the code?" with `Good: no`. The colours
+were right but the headline read backwards — accurate comments printed
+`inline_accurate → no` in green — and the id said the opposite of the question
+sent with it. On the noisy sample that version answered `unclear`; flipped to
+"does every inline comment agree?" with `Good: yes`, the same sample came back a
+clear `no` (26% yes). One run, so that is a direction, not proof that the
+mismatched id confused the model — but an id and its question should never
+disagree.
 
 ## Scaling the measurement to n=25 (`eval/corpus.json`)
 
